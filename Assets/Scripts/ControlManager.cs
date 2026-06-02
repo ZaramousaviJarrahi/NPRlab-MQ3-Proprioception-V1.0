@@ -48,6 +48,8 @@ public class ControlManager : NetworkBehaviour
                 NetworkManager.Singleton.CustomMessagingManager.RegisterNamedMessageHandler(
                     "SpawnFromServer", OnSpawnInputMessageReceived);
                 NetworkManager.Singleton.CustomMessagingManager.RegisterNamedMessageHandler(
+                    "SpawnRandomFromServer", OnSpawnRandomInputMessageReceived);
+                NetworkManager.Singleton.CustomMessagingManager.RegisterNamedMessageHandler(
                     "DespawnFromServer", OnDesapwnInputMessageReceived);
                 NetworkManager.Singleton.CustomMessagingManager.RegisterNamedMessageHandler(
                     "DespawnAllFromServer", OnDesapwnAllMessageReceived);
@@ -376,6 +378,44 @@ public class ControlManager : NetworkBehaviour
         NetworkDebugConsole.Singleton.SetDebugString($"Prefab {number + 1} instantiated at {hPos}, {vPos}");
     }
 
+    public void SpawnRandom(float x, float y, string indx) {
+        if (x < 0 || x > 1 || y < 0 || y > 1)
+        {
+            NetworkDebugConsole.Singleton.SetDebugString($"Not a valid number input. {x}, {y}");
+            return;
+        }
+
+        GameObject instance = Instantiate(_targetPrefab, _spawnContentsParent);
+
+        // 1. Calculate the Sphere Center (World Space)
+        float radius = _lineRendererDebugController.position.z * 2;
+        float zOffset = _lineRendererDebugController.position.y * 1.5f - 1f;
+        Vector3 sphereCentre = _spawnContentsParent.position + (_spawnContentsParent.rotation * new Vector3(0, 0, zOffset));
+
+        float hLimit = (_lineRendererDebugController.position.x + 1) * 60f;
+        float vLimit = (_lineRendererDebugController.position.x + 1) * 60f;
+
+        // 2. Helper function (returns WORLD position)
+        Vector3 GetRotatedPoint(float h, float v) {
+            Quaternion arcRotation = Quaternion.Euler(-v, h, 0);
+            Vector3 rotatedDirection = _spawnContentsParent.rotation * (arcRotation * Vector3.forward);
+            return sphereCentre + (rotatedDirection * radius);
+        }
+
+        // Map 0,1,2 to -Limit/2, 0, +Limit/2
+        float hPos = Mathf.Lerp(-hLimit / 2, hLimit / 2, x);
+        float vPos = Mathf.Lerp(-vLimit / 2, vLimit / 2, y);
+
+        // 4. Assign World Position
+        instance.transform.position = GetRotatedPoint(hPos, vPos);
+
+        // Cleanup
+        instance.GetComponent<TargetController>().hash_for_random = indx;
+        instance.GetComponent<TargetController>().SetRandom(true);
+        _targets.Add(instance.transform);
+        NetworkDebugConsole.Singleton.SetDebugString($"Prefab {indx} instantiated at {hPos}, {vPos}");
+    }
+
     private void UpdateDebugSphereLineRenderer() {
         // 1. Setup variables
         float radius = _lineRendererDebugController.position.z * 2;
@@ -558,6 +598,19 @@ public class ControlManager : NetworkBehaviour
         // SendHelloToServer(number);
     }
 
+    private void OnSpawnRandomInputMessageReceived(ulong senderClientId, FastBufferReader reader) {
+        // Read payload in same order as server wrote it
+        reader.ReadValueSafe(out FixedString64Bytes text);
+        reader.ReadValueSafe(out float x);
+        reader.ReadValueSafe(out float y);
+        reader.ReadValueSafe(out string indx);
+
+        NetworkDebugConsole.Singleton.SetDebugString($"Received from {senderClientId}: {x}, {y}, {indx}, {text}");
+        _numberOfTargetsSpawned += 1;
+        SpawnRandom(x, y, indx);
+        // SendHelloToServer(number);
+    }
+
     private void OnDesapwnInputMessageReceived(ulong senderClientId, FastBufferReader reader) {
         // Read payload in same order as server wrote it
         reader.ReadValueSafe(out int number);
@@ -595,10 +648,10 @@ public class ControlManager : NetworkBehaviour
     private void DespawnAll() {
         NetworkDebugConsole.Singleton.SetDebugString($"{_targets.Count} objects to despawn");
         int _targetsSize = _targets.Count;
-        for (int i = 0; i < _targetsSize; i++)
+        for (int i = _targets.Count - 1; i >= 0; i--)
         {
-            NetworkDebugConsole.Singleton.SetDebugString($"Despawning {_targets[0].GetComponent<TargetController>().index + 1}");
-            _targets[0].GetComponent<TargetController>().DisappearNow();
+            NetworkDebugConsole.Singleton.SetDebugString($"Despawning {_targets[i].GetComponent<TargetController>().index + 1}");
+            _targets[i].GetComponent<TargetController>().DisappearNow();
         }
         _targets.Clear();
         _targetsInRange.Clear();
@@ -647,6 +700,34 @@ public class ControlManager : NetworkBehaviour
                 writer
             );
             NetworkDebugConsole.Singleton.SetDebugString($"Target {number} captured sent to server.");
+        }
+    }
+
+    public void SendCaptureToServer(string hash, Vector3 targetPosition) {
+        if (NetworkManager.Singleton.IsClient)
+        {
+            using var writer = new FastBufferWriter(128, Allocator.Temp);
+            writer.WriteValueSafe(hash);
+            writer.WriteValueSafe(new FixedString64Bytes("Captured"));
+            if (Vector3.Distance(targetPosition, _leftIndexTipPosition) < Vector3.Distance(targetPosition, _rightIndexTipPosition))
+            {
+                Vector3 worldDirection = _leftIndexTipPosition - targetPosition;
+                Vector3 localOffset = Quaternion.Inverse(_spawnContentsParent.rotation) * worldDirection;
+                writer.WriteValueSafe(localOffset);
+            }
+            else
+            {
+                Vector3 worldDirection = _rightIndexTipPosition - targetPosition;
+                Vector3 localOffset = Quaternion.Inverse(_spawnContentsParent.rotation) * worldDirection;
+                writer.WriteValueSafe(localOffset);
+            }
+
+            NetworkManager.Singleton.CustomMessagingManager.SendNamedMessage(
+                "CaptureRandomFromClient",
+                NetworkManager.ServerClientId,
+                writer
+            );
+            NetworkDebugConsole.Singleton.SetDebugString($"Target {hash} captured sent to server.");
         }
     }
 

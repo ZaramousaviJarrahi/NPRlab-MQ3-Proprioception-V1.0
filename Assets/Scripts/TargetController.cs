@@ -5,6 +5,7 @@ using UnityEngine;
 public class TargetController : MonoBehaviour
 {
     [HideInInspector] public int index;
+    [HideInInspector] public string hash_for_random;
     [SerializeField] private float _disappearingDuration = 2f;
     private float _disappearTime = 0;
     private bool _startDisappearing = false;
@@ -12,6 +13,7 @@ public class TargetController : MonoBehaviour
     private Grabbable _grabbable;
     private HandGrabInteractable _handGrabInteractable;
     private GrabInteractable _grabInteractable;
+    private bool _random = false;
 
     void Start()
     {
@@ -55,6 +57,17 @@ public class TargetController : MonoBehaviour
     }
 
     public void Capture() {
-        ControlManager.Singleton.SendCaptureToServer(index + 1, transform.position);
+        if (_random)
+        {
+            ControlManager.Singleton.SendCaptureToServer(hash_for_random, transform.position);
+        }
+        else
+        {
+            ControlManager.Singleton.SendCaptureToServer(index, transform.position);
+        }
+    }
+
+    public void SetRandom(bool rand) {
+        _random = rand;
     }
 }
