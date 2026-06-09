@@ -479,7 +479,7 @@ public class ControlManager : NetworkBehaviour
                     if (target.GetComponent<TargetController>().index == number)
                     {
                         _targets.Remove(target);
-                        target.GetComponent<TargetController>().Disappear();
+                        target.GetComponent<TargetController>().DisappearByNumber();
                         NetworkDebugConsole.Singleton.SetDebugString($"Prefab {number + 1} desapwned locally");
                         break;
                     }
@@ -491,7 +491,7 @@ public class ControlManager : NetworkBehaviour
                     if (target.GetComponent<TargetController>().index == number)
                     {
                         _targets.Remove(target);
-                        target.GetComponent<TargetController>().Disappear();
+                        target.GetComponent<TargetController>().DisappearByNumber();
                         NetworkDebugConsole.Singleton.SetDebugString($"Prefab {number + 1} desapwned locally");
                         break;
                     }
@@ -503,7 +503,7 @@ public class ControlManager : NetworkBehaviour
                     if (target.GetComponent<TargetController>().index == number)
                     {
                         _targets.Remove(target);
-                        target.GetComponent<TargetController>().Disappear();
+                        target.GetComponent<TargetController>().DisappearByNumber();
                         NetworkDebugConsole.Singleton.SetDebugString($"Prefab {number + 1} desapwned locally");
                         break;
                     }
@@ -515,7 +515,7 @@ public class ControlManager : NetworkBehaviour
                     if (target.GetComponent<TargetController>().index == number)
                     {
                         _targets.Remove(target);
-                        target.GetComponent<TargetController>().Disappear();
+                        target.GetComponent<TargetController>().DisappearByNumber();
                         NetworkDebugConsole.Singleton.SetDebugString($"Prefab {number + 1} desapwned locally");
                         break;
                     }
@@ -527,7 +527,7 @@ public class ControlManager : NetworkBehaviour
                     if (target.GetComponent<TargetController>().index == number)
                     {
                         _targets.Remove(target);
-                        target.GetComponent<TargetController>().Disappear();
+                        target.GetComponent<TargetController>().DisappearByNumber();
                         NetworkDebugConsole.Singleton.SetDebugString($"Prefab {number + 1} desapwned locally");
                         break;
                     }
@@ -539,7 +539,7 @@ public class ControlManager : NetworkBehaviour
                     if (target.GetComponent<TargetController>().index == number)
                     {
                         _targets.Remove(target);
-                        target.GetComponent<TargetController>().Disappear();
+                        target.GetComponent<TargetController>().DisappearByNumber();
                         NetworkDebugConsole.Singleton.SetDebugString($"Prefab {number + 1} desapwned locally");
                         break;
                     }
@@ -551,7 +551,7 @@ public class ControlManager : NetworkBehaviour
                     if (target.GetComponent<TargetController>().index == number)
                     {
                         _targets.Remove(target);
-                        target.GetComponent<TargetController>().Disappear();
+                        target.GetComponent<TargetController>().DisappearByNumber();
                         NetworkDebugConsole.Singleton.SetDebugString($"Prefab {number + 1} desapwned locally");
                         break;
                     }
@@ -563,7 +563,7 @@ public class ControlManager : NetworkBehaviour
                     if (target.GetComponent<TargetController>().index == number)
                     {
                         _targets.Remove(target);
-                        target.GetComponent<TargetController>().Disappear();
+                        target.GetComponent<TargetController>().DisappearByNumber();
                         NetworkDebugConsole.Singleton.SetDebugString($"Prefab {number + 1} desapwned locally");
                         break;
                     }
@@ -575,7 +575,7 @@ public class ControlManager : NetworkBehaviour
                     if (target.GetComponent<TargetController>().index == number)
                     {
                         _targets.Remove(target);
-                        target.GetComponent<TargetController>().Disappear();
+                        target.GetComponent<TargetController>().DisappearByNumber();
                         NetworkDebugConsole.Singleton.SetDebugString($"Prefab {number + 1} desapwned locally");
                         break;
                     }
@@ -729,6 +729,10 @@ public class ControlManager : NetworkBehaviour
             );
             NetworkDebugConsole.Singleton.SetDebugString($"Target {hash} captured sent to server.");
         }
+    }
+
+    public Transform GetClosestTarget() {
+        return _closestTarget;
     }
 
     public void TargetCaptured(Transform _capturedTargetTransform) {
