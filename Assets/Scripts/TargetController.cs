@@ -54,11 +54,13 @@ public class TargetController : MonoBehaviour
             if (transform == ControlManager.Singleton.GetClosestTarget())
             {
                 _collider.enabled = true;
+                _grabbable.enabled = true;
                 _meshRenderer.material = _disappearingMaterial;
             }
             else
             {
                 _collider.enabled = false;
+                _grabbable.enabled = false;
                 _meshRenderer.material = _initialMaterial;
             }
         }
