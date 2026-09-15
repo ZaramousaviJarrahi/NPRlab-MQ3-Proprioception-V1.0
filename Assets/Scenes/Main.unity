@@ -1345,9 +1345,9 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   ShowTopMostFoldoutHeaderGroup: 1
   _targetPrefab: {fileID: 1010785803753136644, guid: 9440d6d9b6a57324baa6578a3925d570, type: 3}
-  _pivotDistance: 2
+  _pivotDistance: 4
   _pivotScale: 3
-  _captureableRange: 0.15
+  _captureableRange: 0.25
   _lineRendererMaterial: {fileID: 2100000, guid: 1bd9d19105baea14aa7a20466ae8d0b3, type: 2}
   _leftFingerTipSphere: {fileID: 853312117}
   _rightFingerTipSphere: {fileID: 316397478}
