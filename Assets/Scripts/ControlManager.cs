@@ -15,6 +15,8 @@ using static OVRLocatable;
 public class ControlManager : NetworkBehaviour
 {
     public static ControlManager Singleton { get; private set; }
+    // Fires every time a target is successfully grasped/captured (independent of network state).
+    public event Action OnTargetCaptured;
     [SerializeField] private GameObject _targetPrefab;
     [SerializeField] private float _pivotDistance = 0.2f;
     [SerializeField] private float _pivotScale = 0.2f;
@@ -676,6 +678,7 @@ public class ControlManager : NetworkBehaviour
     }
 
     public void SendCaptureToServer(int number, Vector3 targetPosition) {
+        OnTargetCaptured?.Invoke();
         if (NetworkManager.Singleton.IsClient)
         {
             using var writer = new FastBufferWriter(128, Allocator.Temp);
@@ -704,6 +707,7 @@ public class ControlManager : NetworkBehaviour
     }
 
     public void SendCaptureToServer(string hash, Vector3 targetPosition) {
+        OnTargetCaptured?.Invoke();
         if (NetworkManager.Singleton.IsClient)
         {
             using var writer = new FastBufferWriter(128, Allocator.Temp);
@@ -729,6 +733,12 @@ public class ControlManager : NetworkBehaviour
             );
             NetworkDebugConsole.Singleton.SetDebugString($"Target {hash} captured sent to server.");
         }
+    }
+
+    // TESTING ONLY: raises the same event a real grasp does, so the trial-counting
+    // logic can be verified without a server connection or a headset.
+    public void SimulateCapture() {
+        OnTargetCaptured?.Invoke();
     }
 
     public Transform GetClosestTarget() {
