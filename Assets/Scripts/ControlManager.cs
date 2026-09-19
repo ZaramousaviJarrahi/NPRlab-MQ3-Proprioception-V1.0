@@ -17,6 +17,23 @@ public class ControlManager : NetworkBehaviour
     public static ControlManager Singleton { get; private set; }
     // Fires every time a target is successfully grasped/captured (independent of network state).
     public event Action OnTargetCaptured;
+
+    // Everything the data recorder needs about a single grasp.
+    public struct CaptureData
+    {
+        public Vector3 targetPosition;      // centre of the grasped target
+        public Vector3 fingerTipPosition;   // index fingertip at the moment of grasp
+        public float endpointErrorMeters;   // distance between the two = endpoint error
+        public bool usedLeftHand;
+        public bool isSimulated;            // true only for the TEST button
+        public int targetIndex;             // grid position 1-9, or -1 if unknown
+    }
+
+    // Fired alongside OnTargetCaptured, carrying the measurements for recording.
+    public event Action<CaptureData> OnTargetCapturedDetailed;
+
+    // Fired whenever a target is spawned, so a trial's stopwatch can be started.
+    public event Action OnTargetSpawned;
     [SerializeField] private GameObject _targetPrefab;
     [SerializeField] private float _pivotDistance = 0.2f;
     [SerializeField] private float _pivotScale = 0.2f;
@@ -377,6 +394,7 @@ public class ControlManager : NetworkBehaviour
         // Cleanup
         instance.GetComponent<TargetController>().index = number;
         _targets.Add(instance.transform);
+        OnTargetSpawned?.Invoke();
         NetworkDebugConsole.Singleton.SetDebugString($"Prefab {number + 1} instantiated at {hPos}, {vPos}");
     }
 
@@ -415,6 +433,7 @@ public class ControlManager : NetworkBehaviour
         instance.GetComponent<TargetController>().hash_for_random = indx;
         instance.GetComponent<TargetController>().SetRandom(true);
         _targets.Add(instance.transform);
+        OnTargetSpawned?.Invoke();
         NetworkDebugConsole.Singleton.SetDebugString($"Prefab {indx} instantiated at {hPos}, {vPos}");
     }
 
@@ -679,6 +698,7 @@ public class ControlManager : NetworkBehaviour
 
     public void SendCaptureToServer(int number, Vector3 targetPosition) {
         OnTargetCaptured?.Invoke();
+        OnTargetCapturedDetailed?.Invoke(BuildCaptureData(targetPosition, number + 1));
         if (NetworkManager.Singleton.IsClient)
         {
             using var writer = new FastBufferWriter(128, Allocator.Temp);
@@ -708,6 +728,7 @@ public class ControlManager : NetworkBehaviour
 
     public void SendCaptureToServer(string hash, Vector3 targetPosition) {
         OnTargetCaptured?.Invoke();
+        OnTargetCapturedDetailed?.Invoke(BuildCaptureData(targetPosition, -1));
         if (NetworkManager.Singleton.IsClient)
         {
             using var writer = new FastBufferWriter(128, Allocator.Temp);
@@ -735,10 +756,39 @@ public class ControlManager : NetworkBehaviour
         }
     }
 
+    // Works out which hand made the grasp and how far its fingertip was from the
+    // target's centre. Mirrors the hand-choice logic already used when reporting to the server.
+    private CaptureData BuildCaptureData(Vector3 targetPosition, int targetIndex) {
+        float distLeft = Vector3.Distance(targetPosition, _leftIndexTipPosition);
+        float distRight = Vector3.Distance(targetPosition, _rightIndexTipPosition);
+        bool left = distLeft < distRight;
+        return new CaptureData {
+            targetPosition = targetPosition,
+            fingerTipPosition = left ? _leftIndexTipPosition : _rightIndexTipPosition,
+            endpointErrorMeters = left ? distLeft : distRight,
+            usedLeftHand = left,
+            isSimulated = false,
+            targetIndex = targetIndex
+        };
+    }
+
     // TESTING ONLY: raises the same event a real grasp does, so the trial-counting
     // logic can be verified without a server connection or a headset.
     public void SimulateCapture() {
         OnTargetCaptured?.Invoke();
+        var data = BuildCaptureData(_rightIndexTipPosition, -1);
+        data.isSimulated = true;
+        OnTargetCapturedDetailed?.Invoke(data);
+    }
+
+    // Lets the task sequencer clear the board between trials without going via the network.
+    // Exposed so the participant view can switch the debug visuals off without
+    // anything needing to be dragged into an Inspector slot.
+    public LineRenderer DebugBoundaryLine => _lineRenderer;
+    public Transform DebugController => _lineRendererDebugController;
+
+    public void ClearAllTargets() {
+        DespawnAll();
     }
 
     public Transform GetClosestTarget() {

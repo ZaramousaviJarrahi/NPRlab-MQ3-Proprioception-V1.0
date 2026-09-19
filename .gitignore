@@ -88,3 +88,10 @@ crashlytics-build.properties
 /_to_delete/
 .vscode/
 mono_crash.*
+
+# Participant data must never be committed - keep it off GitHub
+/RecordedData/
+
+# Unity-generated duplicate settings files
+ShaderGraphSettings [0-9]*.asset
+OpenXR Package Settings [0-9]*.asset

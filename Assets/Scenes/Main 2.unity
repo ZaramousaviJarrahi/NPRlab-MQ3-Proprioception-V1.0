@@ -1423,6 +1423,9 @@ GameObject:
   - component: {fileID: 365879006}
   - component: {fileID: 365879007}
   - component: {fileID: 365879008}
+  - component: {fileID: 365879009}
+  - component: {fileID: 365879010}
+  - component: {fileID: 365879011}
   m_Layer: 0
   m_Name: ControlManager
   m_TagString: Untagged
@@ -1648,6 +1651,68 @@ MonoBehaviour:
   trialsRandom: 54
   showSimulateCaptureButton: 1
   experimenterMode: {fileID: 365879006}
+--- !u!114 &365879009
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 365878999}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: a59470b28632a490c8b3a2e17f01dcc7, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  participantId: 
+  visitLabel: Visit1
+  rowsWritten: 0
+  trialsCompleted: 0
+  currentFilePath: 
+--- !u!114 &365879010
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 365878999}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: cec40dd1b740345e180bf06f6b5aa657, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  useFixedGrid: 1
+  gridWidth: 0.5
+  gridHeight: 0.4
+  gridDistance: 0.45
+  gridHeightOffset: -0.15
+  showHomeMarker: 1
+  homeBelowBottomRow: 0.1
+  homeTowardParticipant: 0.15
+  homeMarkerSize: 0.05
+  anchorToParticipant: 1
+  taskA: 7,3,6
+  taskB: 9,1,4
+  taskC: 1,2,4
+  showAllNineObjects: 0
+  currentSequence: 
+  trialsStarted: 0
+--- !u!114 &365879011
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 365878999}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 4203be629c50647a6a1d67526e2f11b6, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  cleanViewForParticipant: 1
+  alsoHideByName:
+  - Debug
+  - Canvas
+  - Cube
 --- !u!114 &377332078
 MonoBehaviour:
   m_ObjectHideFlags: 0
