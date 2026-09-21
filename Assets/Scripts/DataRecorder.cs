@@ -34,6 +34,7 @@ public class DataRecorder : MonoBehaviour
     private ExperimenterMode _experimenterMode;
     private HandVisibilityToggle _handVisibility;
     private TaskSequencer _taskSequencer;
+    private SessionRunner _sessionRunner;
 
     private StreamWriter _writer;
     private int _graspInTrial = 0;
@@ -43,7 +44,7 @@ public class DataRecorder : MonoBehaviour
     private bool _trialInProgress = false;
 
     private const string Header =
-        "participant_id,visit,timestamp,condition,task,trial_number,grasp_in_trial,target_position_number," +
+        "participant_id,visit,timestamp,block,condition,task,trial_number,grasp_in_trial,target_position_number," +
         "time_since_spawn_s,time_since_first_grasp_s,endpoint_error_m," +
         "target_x,target_y,target_z,fingertip_x,fingertip_y,fingertip_z," +
         "hand_used,hands_visible,simulated,grid_width_m,grid_height_m,grid_distance_m";
@@ -54,6 +55,7 @@ public class DataRecorder : MonoBehaviour
         _experimenterMode = GetComponent<ExperimenterMode>();
         _handVisibility = GetComponent<HandVisibilityToggle>();
         _taskSequencer = GetComponent<TaskSequencer>();
+        _sessionRunner = GetComponent<SessionRunner>();
 
         if (ControlManager.Singleton != null)
         {
@@ -143,6 +145,7 @@ public class DataRecorder : MonoBehaviour
             Clean(participantId),
             Clean(visitLabel),
             DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff", CultureInfo.InvariantCulture),
+            _sessionRunner != null ? Clean(_sessionRunner.CurrentBlockLabel()) : "",
             condition,
             task,
             _trialNumber.ToString(CultureInfo.InvariantCulture),

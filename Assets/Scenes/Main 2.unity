@@ -1426,6 +1426,9 @@ GameObject:
   - component: {fileID: 365879009}
   - component: {fileID: 365879010}
   - component: {fileID: 365879011}
+  - component: {fileID: 365879012}
+  - component: {fileID: 365879013}
+  - component: {fileID: 365879014}
   m_Layer: 0
   m_Name: ControlManager
   m_TagString: Untagged
@@ -1693,7 +1696,7 @@ MonoBehaviour:
   taskA: 7,3,6
   taskB: 9,1,4
   taskC: 1,2,4
-  showAllNineObjects: 0
+  showAllNineObjects: 1
   currentSequence: 
   trialsStarted: 0
 --- !u!114 &365879011
@@ -1713,6 +1716,64 @@ MonoBehaviour:
   - Debug
   - Canvas
   - Cube
+--- !u!114 &365879012
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 365878999}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 9087a0a20481a4b3f89140c99729f920, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  participantNumber: 1
+  participantPrefix: P
+  visitNumber: 1
+  useControllerButtons: 1
+  useKeyboard: 1
+  showShortcutList: 1
+--- !u!114 &365879013
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 365878999}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 6262ec9970eb74baf8e0f5375a52a584, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  familiarizationTrials: 6
+  trialsPerTask: 18
+  blockedTaskOrder: A,B,C
+  avoidImmediateRepeats: 1
+  randomSeed: 0
+  currentBlock: 
+  trialIndex: 0
+  totalTrials: 0
+  sessionPlanned: 0
+  waitingToStartTrial: 0
+--- !u!114 &365879014
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 365878999}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: bea8e162af9a64c34b89fa2a20a1f23f, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  showInHeadset: 1
+  distance: 1
+  heightOffset: 0.4
+  textSize: 0.9
+  showLogMessages: 1
+  logLines: 6
 --- !u!114 &377332078
 MonoBehaviour:
   m_ObjectHideFlags: 0

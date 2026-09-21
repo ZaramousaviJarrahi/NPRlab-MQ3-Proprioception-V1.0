@@ -95,3 +95,18 @@ mono_crash.*
 # Unity-generated duplicate settings files
 ShaderGraphSettings [0-9]*.asset
 OpenXR Package Settings [0-9]*.asset
+
+# --- NPRlab additions ---
+
+# PARTICIPANT DATA. Never commit this. Recorded CSVs contain study data and
+# belong on lab secure storage, not in a public GitHub repository.
+/RecordedData/
+*.csv
+
+# Discarded build output and caches moved aside during debugging.
+/_build_junk/
+/Builds/
+
+# macOS / file-sync clutter
+.DS_Store
+*[0-9].meta.bak

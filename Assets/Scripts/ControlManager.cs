@@ -60,6 +60,31 @@ public class ControlManager : NetworkBehaviour
 
 
     void Awake() {
+        // Claim the singleton FIRST.
+        //
+        // This assignment used to sit at the BOTTOM of Awake, after the NetworkManager
+        // registration below. NetworkManager.Singleton is null until NetworkManager's own
+        // Awake has run, and Unity does not guarantee which component wakes first. When
+        // ControlManager won that race, the very first line threw a NullReferenceException,
+        // Awake aborted, and ControlManager.Singleton was never assigned. Every script that
+        // guards with "if (ControlManager.Singleton == null) return;" then silently did
+        // nothing - no targets, no error the experimenter could see in the headset.
+        // Assigning first makes the manager work with or without networking running.
+        if (Singleton != null && Singleton != this)
+        {
+            Debug.LogError($"More than one {nameof(ControlManager)} in the scene. Keeping the first.");
+            return;
+        }
+        Singleton = this;
+
+        if (NetworkManager.Singleton == null)
+        {
+            Debug.LogWarning("ControlManager: no NetworkManager available yet - running locally. " +
+                             "This is normal for the standalone headset build, where nothing " +
+                             "starts a host or client.");
+            return;
+        }
+
         NetworkManager.Singleton.OnClientConnectedCallback += (clientId) =>
         {
             if (clientId == NetworkManager.Singleton.LocalClientId) // only register for self
@@ -74,12 +99,6 @@ public class ControlManager : NetworkBehaviour
                     "DespawnAllFromServer", OnDesapwnAllMessageReceived);
             }
         };
-        if (Singleton != null)
-        {
-            throw new Exception($"Detected more than one instance of {nameof(NetworkDebugConsole)}! " +
-                $"Do you have more than one component attached to a {nameof(GameObject)}");
-        }
-        Singleton = this;
     }
 
     void Start() {
@@ -394,6 +413,7 @@ public class ControlManager : NetworkBehaviour
         // Cleanup
         instance.GetComponent<TargetController>().index = number;
         _targets.Add(instance.transform);
+        _numberOfTargetsSpawned += 1;   // needed for FindClosestTarget to run
         OnTargetSpawned?.Invoke();
         NetworkDebugConsole.Singleton.SetDebugString($"Prefab {number + 1} instantiated at {hPos}, {vPos}");
     }
@@ -433,6 +453,7 @@ public class ControlManager : NetworkBehaviour
         instance.GetComponent<TargetController>().hash_for_random = indx;
         instance.GetComponent<TargetController>().SetRandom(true);
         _targets.Add(instance.transform);
+        _numberOfTargetsSpawned += 1;   // needed for FindClosestTarget to run
         OnTargetSpawned?.Invoke();
         NetworkDebugConsole.Singleton.SetDebugString($"Prefab {indx} instantiated at {hPos}, {vPos}");
     }

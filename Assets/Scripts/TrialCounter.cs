@@ -1,9 +1,13 @@
+using System;
 using UnityEngine;
 
 // Attach this to the same GameObject as ControlManager and ExperimenterMode
 // (e.g. the ControlManager object in the Main scene).
 public class TrialCounter : MonoBehaviour
 {
+    // Raised the moment a trial's last grasp lands, so the session runner can advance.
+    public event Action OnTrialComplete;
+
     public enum PracticeSchedule { Blocked, Random }
     public enum BlockedTask { TaskA, TaskB, TaskC }
 
@@ -100,6 +104,7 @@ public class TrialCounter : MonoBehaviour
             }
 
             Debug.Log($"Trial complete. Total trials this session: {_trialCount}");
+            OnTrialComplete?.Invoke();
         }
     }
 
