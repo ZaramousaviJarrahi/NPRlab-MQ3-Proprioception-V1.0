@@ -1429,6 +1429,8 @@ GameObject:
   - component: {fileID: 365879012}
   - component: {fileID: 365879013}
   - component: {fileID: 365879014}
+  - component: {fileID: 365879015}
+  - component: {fileID: 365879016}
   m_Layer: 0
   m_Name: ControlManager
   m_TagString: Untagged
@@ -1734,6 +1736,7 @@ MonoBehaviour:
   useControllerButtons: 1
   useKeyboard: 1
   showShortcutList: 1
+  showTestButtons: 1
 --- !u!114 &365879013
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1768,12 +1771,47 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: bea8e162af9a64c34b89fa2a20a1f23f, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  showInHeadset: 1
+  showInHeadset: 0
   distance: 1
   heightOffset: 0.4
   textSize: 0.9
   showLogMessages: 1
   logLines: 6
+--- !u!114 &365879015
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 365878999}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 710b218640b1542c889c7551141032a7, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  useConfigFile: 1
+  fileName: session_config.txt
+  useAllocationTable: 1
+  allocationFileName: allocation.csv
+  writeTemplateIfMissing: 1
+  loaded: 0
+  loadedFrom: 
+  summary: 
+--- !u!114 &365879016
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 365878999}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 3fa3c76981dad431c8d2259bc5ecd993, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  clickOnTrialComplete: 0
+  chimeOnTaskChange: 1
+  volume: 1
 --- !u!114 &377332078
 MonoBehaviour:
   m_ObjectHideFlags: 0

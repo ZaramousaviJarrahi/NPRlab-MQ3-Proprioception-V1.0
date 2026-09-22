@@ -15,6 +15,18 @@ using static OVRLocatable;
 public class ControlManager : NetworkBehaviour
 {
     public static ControlManager Singleton { get; private set; }
+
+    [Header("Participant-visible feedback")]
+    [Tooltip("Tints the sphere nearest the hand. OFF for real sessions.\n\n" +
+             "The tint tells the participant where their hand is relative to the targets. " +
+             "In the hidden-hand condition that is exactly the information the condition " +
+             "removes, handed back through a different channel, so H4 could not be tested " +
+             "with it on. Turning it off only for Visit 3 would make Visit 3 differ from " +
+             "training in two ways at once, so it is off for every visit and hand " +
+             "visibility stays the single manipulated variable.\n\n" +
+             "Only the TINT is affected. The nearest sphere is still the only grabbable " +
+             "one - that gating is what makes grasping work and is untouched.")]
+    public bool highlightClosestTarget = false;
     // Fires every time a target is successfully grasped/captured (independent of network state).
     public event Action OnTargetCaptured;
 

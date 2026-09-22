@@ -51,18 +51,18 @@ public class TargetController : MonoBehaviour
         }
         else
         {
-            if (transform == ControlManager.Singleton.GetClosestTarget())
-            {
-                _collider.enabled = true;
-                _grabbable.enabled = true;
-                _meshRenderer.material = _disappearingMaterial;
-            }
-            else
-            {
-                _collider.enabled = false;
-                _grabbable.enabled = false;
-                _meshRenderer.material = _initialMaterial;
-            }
+            // Grab gating and the visual tint were one and the same. They are separated
+            // here: the nearest sphere is still the only grabbable one - remove that and
+            // nine overlapping grabbables fight each other - but the tint is now optional,
+            // because it tells the participant where their hand is and that is the very
+            // information the hidden-hand condition is meant to remove.
+            bool isClosest = transform == ControlManager.Singleton.GetClosestTarget();
+
+            _collider.enabled = isClosest;
+            _grabbable.enabled = isClosest;
+
+            bool tint = isClosest && ControlManager.Singleton.highlightClosestTarget;
+            _meshRenderer.material = tint ? _disappearingMaterial : _initialMaterial;
         }
     }
 
