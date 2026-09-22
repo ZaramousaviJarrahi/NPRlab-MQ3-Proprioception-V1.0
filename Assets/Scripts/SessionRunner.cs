@@ -45,6 +45,27 @@ public class SessionRunner : MonoBehaviour
              "0 uses the clock, giving a different order each time.")]
     public int randomSeed = 0;
 
+    [Header("Visit 2 - retention and transfer")]
+    [Tooltip("Retention trials per trained task, 24 h after acquisition. 6 x 3 tasks = 18, " +
+             "per the study plan.")]
+    public int retentionTrialsPerTask = 6;
+
+    [Tooltip("Trials of EACH novel transfer task. Transfer is about performance on novel " +
+             "material, so every extra trial is the participant learning the transfer task " +
+             "and diluting the measure. 9 allows both an initial-transfer score (first 3) " +
+             "and a stable mean.")]
+    public int transferTrials = 9;
+
+    public enum RetentionOrder { Random, Blocked }
+
+    [Tooltip("STILL AN OPEN DECISION in the study plan - confirm it before collecting.\n\n" +
+             "A retention test given in blocked order arguably favours the group that " +
+             "trained in blocked order, and vice versa, so the order of the retention test " +
+             "is not a neutral choice. Random is the common default because it tests " +
+             "retrieval rather than repetition, but this should be a deliberate decision " +
+             "and stated in the methods.")]
+    public RetentionOrder retentionOrder = RetentionOrder.Random;
+
     [Header("Status (read-only)")]
     public string currentBlock = "";
     public int trialIndex = 0;
@@ -91,6 +112,11 @@ public class SessionRunner : MonoBehaviour
     {
         _order.Clear();
         _blockOf.Clear();
+
+        // The visit decides the shape of the session. Visit 1 is acquisition; Visit 2 is
+        // retention on the trained tasks followed by the two novel transfer tasks.
+        var controls = GetComponent<ExperimenterControls>();
+        if (controls != null && controls.visitNumber == 2) { BuildVisit2Plan(); return; }
 
         var tasks = new[] { TrialCounter.BlockedTask.TaskA,
                             TrialCounter.BlockedTask.TaskB,
@@ -167,7 +193,52 @@ public class SessionRunner : MonoBehaviour
                   $"{totalTrials - familiarizationTrials} acquisition = {totalTrials} trials, " +
                   $"{(random ? "RANDOM" : "BLOCKED " + blockedTaskOrder)}.");
 
-        ExportPlan(random);
+        ExportPlan(random ? "Random" : "Blocked (" + blockedTaskOrder + ")", random);
+        PrepareCurrentTrial();
+    }
+
+    // Visit 2: 18 retention trials on the TRAINED tasks, then the novel same-complexity
+    // transfer task, then the novel greater-complexity one.
+    //
+    // The transfer tasks always come after retention and always in that order. Retention
+    // must be measured before any exposure to novel material, and doing the five-element
+    // task first would contaminate the three-element one.
+    private void BuildVisit2Plan()
+    {
+        var trained = new[] { TrialCounter.BlockedTask.TaskA,
+                              TrialCounter.BlockedTask.TaskB,
+                              TrialCounter.BlockedTask.TaskC };
+
+        var retention = new List<TrialCounter.BlockedTask>();
+        foreach (var t in trained)
+            for (int i = 0; i < retentionTrialsPerTask; i++) retention.Add(t);
+
+        if (retentionOrder == RetentionOrder.Random)
+        {
+            System.Random rng = randomSeed == 0 ? new System.Random() : new System.Random(randomSeed);
+            for (int i = retention.Count - 1; i > 0; i--)
+            {
+                int j = rng.Next(i + 1);
+                (retention[i], retention[j]) = (retention[j], retention[i]);
+            }
+        }
+
+        foreach (var t in retention) { _order.Add(t); _blockOf.Add("Retention"); }
+
+        for (int i = 0; i < transferTrials; i++)
+        { _order.Add(TrialCounter.BlockedTask.Transfer3); _blockOf.Add("Transfer-3"); }
+
+        for (int i = 0; i < transferTrials; i++)
+        { _order.Add(TrialCounter.BlockedTask.Transfer5); _blockOf.Add("Transfer-5"); }
+
+        trialIndex = 0;
+        totalTrials = _order.Count;
+        sessionPlanned = true;
+
+        Debug.Log($"VISIT 2 planned: {retention.Count} retention ({retentionOrder}) + " +
+                  $"{transferTrials} Transfer-3 + {transferTrials} Transfer-5 = {totalTrials} trials.");
+
+        ExportPlan($"Visit 2 - retention ({retentionOrder}) then transfer", retentionOrder == RetentionOrder.Random);
         PrepareCurrentTrial();
     }
 
@@ -180,7 +251,7 @@ public class SessionRunner : MonoBehaviour
     // eventually would, the first time a setting changed and only one of them was updated.
     //
     // Pull this file off the headset with SideQuest (Files tab) and print it.
-    private void ExportPlan(bool random)
+    private void ExportPlan(string conditionLabel, bool showSeed)
     {
         try
         {
@@ -196,11 +267,16 @@ public class SessionRunner : MonoBehaviour
             s.AppendLine($"NPRlab session plan");
             s.AppendLine($"Participant : {who}");
             s.AppendLine($"Visit       : {visit}");
-            s.AppendLine($"Condition   : {(random ? "Random" : "Blocked (" + blockedTaskOrder + ")")}");
-            if (random) s.AppendLine($"Seed        : {(randomSeed == 0 ? "clock - NOT reproducible" : randomSeed.ToString())}");
+            s.AppendLine($"Condition   : {conditionLabel}");
+            if (showSeed) s.AppendLine($"Seed        : {(randomSeed == 0 ? "clock - NOT reproducible" : randomSeed.ToString())}");
             s.AppendLine($"Generated   : {System.DateTime.Now:yyyy-MM-dd HH:mm:ss}");
-            s.AppendLine($"Total       : {familiarizationTrials} familiarization + " +
-                         $"{totalTrials - familiarizationTrials} acquisition = {totalTrials} trials");
+            // Counted from the actual plan rather than assumed, so it stays correct for
+            // any visit rather than only describing a Visit 1 session.
+            var perBlock = new System.Collections.Generic.Dictionary<string, int>();
+            foreach (string b in _blockOf) { perBlock.TryGetValue(b, out int c); perBlock[b] = c + 1; }
+            var parts = new System.Collections.Generic.List<string>();
+            foreach (var kv in perBlock) parts.Add($"{kv.Value} {kv.Key.ToLower()}");
+            s.AppendLine($"Total       : {string.Join(" + ", parts)} = {totalTrials} trials");
             s.AppendLine();
             s.AppendLine("Trial  Block            Task    Say");
             s.AppendLine("-----  ---------------  ------  --------------");
@@ -254,10 +330,10 @@ public class SessionRunner : MonoBehaviour
     private string SequenceFor(TrialCounter.BlockedTask task)
     {
         if (_taskSequencer == null) return "";
-        string raw = task == TrialCounter.BlockedTask.TaskB ? _taskSequencer.taskB
-                   : task == TrialCounter.BlockedTask.TaskC ? _taskSequencer.taskC
-                   : _taskSequencer.taskA;
-        return string.Join(" -> ", raw.Split(','));
+        // Ask TaskSequencer rather than repeating the mapping here. The old copy knew only
+        // about A, B and C, so once the transfer tasks existed it would have printed Task A's
+        // sequence on every transfer row - the sheet would have been confidently wrong.
+        return string.Join(" -> ", _taskSequencer.SequenceTextFor(task).Split(','));
     }
 
     // ---------------------------------------------------------------- running

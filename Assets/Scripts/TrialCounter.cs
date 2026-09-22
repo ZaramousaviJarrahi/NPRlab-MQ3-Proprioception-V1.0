@@ -9,7 +9,11 @@ public class TrialCounter : MonoBehaviour
     public event Action OnTrialComplete;
 
     public enum PracticeSchedule { Blocked, Random }
-    public enum BlockedTask { TaskA, TaskB, TaskC }
+    // TaskA/B/C are the trained tasks. Transfer3 and Transfer5 are the novel Visit 2
+    // transfer tasks and are never practised. New values go on the END - Unity stores an
+    // enum in a scene by its NUMBER, so inserting one in the middle would silently change
+    // what every saved reference means.
+    public enum BlockedTask { TaskA, TaskB, TaskC, Transfer3, Transfer5 }
 
     [Header("Condition Setup (set this before each session)")]
     public PracticeSchedule practiceSchedule = PracticeSchedule.Blocked;
@@ -17,7 +21,10 @@ public class TrialCounter : MonoBehaviour
     public BlockedTask currentTask = BlockedTask.TaskA;
 
     [Header("Trial Definition")]
-    [Tooltip("How many successful grasps make up one trial. Each trial is a 3-step reach sequence per the study design, so this defaults to 3.")]
+    [Tooltip("Fallback only. The number of grasps in a trial normally comes from the length " +
+             "of the current task's sequence, because the trained tasks are three grasps and " +
+             "the greater-complexity transfer task is five. This value is used only when no " +
+             "TaskSequencer is present.")]
     public int capturesPerTrial = 3;
 
     [Header("Session Targets (from the study design)")]
@@ -34,6 +41,18 @@ public class TrialCounter : MonoBehaviour
     [Header("References")]
     [Tooltip("Drag the ExperimenterMode component here so counting only starts once the experimenter clicks Start Experiment.")]
     public ExperimenterMode experimenterMode;
+
+    private TaskSequencer _taskSequencer;
+
+    // How many grasps complete the CURRENT trial. Read fresh each time rather than cached:
+    // Visit 2 switches from three-grasp trained tasks to a five-grasp transfer task partway
+    // through the session, and a cached value would end those trials two grasps early.
+    public int CapturesRequired()
+    {
+        if (_taskSequencer == null) _taskSequencer = GetComponent<TaskSequencer>();
+        return _taskSequencer != null ? _taskSequencer.CurrentSequenceLength()
+                                      : Mathf.Max(1, capturesPerTrial);
+    }
 
     private int _captureCountInCurrentTrial = 0;
     private int _trialCount = 0;
@@ -88,7 +107,7 @@ public class TrialCounter : MonoBehaviour
 
         _captureCountInCurrentTrial++;
 
-        if (_captureCountInCurrentTrial >= capturesPerTrial)
+        if (_captureCountInCurrentTrial >= CapturesRequired())
         {
             _captureCountInCurrentTrial = 0;
             _trialCount++;
@@ -100,6 +119,7 @@ public class TrialCounter : MonoBehaviour
                     case BlockedTask.TaskA: _taskACount++; break;
                     case BlockedTask.TaskB: _taskBCount++; break;
                     case BlockedTask.TaskC: _taskCCount++; break;
+                    default: break;          // transfer tasks are counted by SessionRunner
                 }
             }
 
@@ -115,7 +135,8 @@ public class TrialCounter : MonoBehaviour
         {
             int taskCount = currentTask == BlockedTask.TaskA ? _taskACount
                           : currentTask == BlockedTask.TaskB ? _taskBCount
-                          : _taskCCount;
+                          : currentTask == BlockedTask.TaskC ? _taskCCount
+                          : _trialCount;
             label = $"{currentTask}: {taskCount}/{trialsPerTaskBlocked}   (All tasks total: {_trialCount}/{trialsPerTaskBlocked * 3})";
         }
         else

@@ -51,9 +51,24 @@ public class TaskSequencer : MonoBehaviour
     [Header("The three matched sequences (grid positions 1-9)")]
     [Tooltip("Task A order, comma separated. Must be matched with B and C on total " +
              "reach distance and number of direction changes - see the study plan.")]
-    public string taskA = "7,3,6";
-    public string taskB = "9,1,4";
-    public string taskC = "1,2,4";
+    public string taskA = "2,7,6";
+    public string taskB = "2,9,4";
+    public string taskC = "4,3,8";
+
+    [Header("Visit 2 transfer sequences (novel - never practised)")]
+    [Tooltip("Same-complexity transfer. Matched to A, B and C: 1.011 m of reach, two " +
+             "movements, one 143.8-degree direction change. Novel sequence, identical " +
+             "difficulty - which is what 'same-complexity transfer' means.")]
+    public string transfer3 = "6,1,8";
+
+    [Tooltip("Greater-complexity transfer. Four movements instead of two, but each movement " +
+             "is the same size and involves the same kind of direction reversal as a trained " +
+             "one, so the added complexity is MORE ELEMENTS, not harder elements.\n\n" +
+             "It deliberately reuses no consecutive pair of positions from any trained task. " +
+             "Every perfectly matched five-target sequence turns out to be two trained tasks " +
+             "joined end to end, which participants would recognise as familiar chunks and " +
+             "which would favour whichever group chunks better.")]
+    public string transfer5 = "1,3,7,9,5";
 
     [Header("What appears")]
     [Tooltip("ON = all nine objects visible, participant grasps the instructed order " +
@@ -78,15 +93,34 @@ public class TaskSequencer : MonoBehaviour
         }
     }
 
+    // The raw comma-separated sequence for any task, in one place, so the spawner, the
+    // trial counter and the printed plan all read from the same source.
+    public string SequenceTextFor(TrialCounter.BlockedTask task)
+    {
+        switch (task)
+        {
+            case TrialCounter.BlockedTask.TaskB:     return taskB;
+            case TrialCounter.BlockedTask.TaskC:     return taskC;
+            case TrialCounter.BlockedTask.Transfer3: return transfer3;
+            case TrialCounter.BlockedTask.Transfer5: return transfer5;
+            default:                                 return taskA;
+        }
+    }
+
+    // How many grasps the current task consists of. A trial is over after this many, which
+    // is why it must not be hard-wired: the trained tasks are three grasps, the greater-
+    // complexity transfer task is five.
+    public int CurrentSequenceLength()
+    {
+        int n = CurrentSequencePositions().Count;
+        return n > 0 ? n : 3;
+    }
+
     // Reads the sequence for whichever task the TrialCounter is currently set to.
     private List<int> CurrentSequencePositions()
     {
-        string raw = taskA;
-        if (_trialCounter != null)
-        {
-            if (_trialCounter.currentTask == TrialCounter.BlockedTask.TaskB) raw = taskB;
-            else if (_trialCounter.currentTask == TrialCounter.BlockedTask.TaskC) raw = taskC;
-        }
+        string raw = SequenceTextFor(_trialCounter != null ? _trialCounter.currentTask
+                                                            : TrialCounter.BlockedTask.TaskA);
 
         var positions = new List<int>();
         foreach (string part in raw.Split(','))

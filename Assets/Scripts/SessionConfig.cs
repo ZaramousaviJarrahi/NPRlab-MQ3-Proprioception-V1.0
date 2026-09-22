@@ -171,6 +171,27 @@ public class SessionConfig : MonoBehaviour
                     }
                     break;
 
+                case "transfer3": if (sequencer != null) { sequencer.transfer3 = val; applied.Add($"transfer3={val}"); } break;
+                case "transfer5": if (sequencer != null) { sequencer.transfer5 = val; applied.Add($"transfer5={val}"); } break;
+
+                case "retentiontrialspertask":
+                    if (runner != null && int.TryParse(val, out int rt))
+                    { runner.retentionTrialsPerTask = Mathf.Max(0, rt); applied.Add($"retentionTrialsPerTask={rt}"); }
+                    break;
+                case "transfertrials":
+                    if (runner != null && int.TryParse(val, out int tt))
+                    { runner.transferTrials = Mathf.Max(0, tt); applied.Add($"transferTrials={tt}"); }
+                    break;
+                case "retentionorder":
+                    if (runner != null)
+                    {
+                        runner.retentionOrder = val.ToLowerInvariant().StartsWith("b")
+                            ? SessionRunner.RetentionOrder.Blocked
+                            : SessionRunner.RetentionOrder.Random;
+                        applied.Add($"retentionOrder={runner.retentionOrder}");
+                    }
+                    break;
+
                 case "taska": if (sequencer != null) { sequencer.taskA = val; applied.Add($"taskA={val}"); } break;
                 case "taskb": if (sequencer != null) { sequencer.taskB = val; applied.Add($"taskB={val}"); } break;
                 case "taskc": if (sequencer != null) { sequencer.taskC = val; applied.Add($"taskC={val}"); } break;
@@ -363,9 +384,16 @@ public class SessionConfig : MonoBehaviour
 "trialsPerTask         = 18\r\n" +
 "\r\n" +
 "# Target sequences, as grid positions 1-9 (1 = top-left, 9 = bottom-right).\r\n" +
-"taskA = 7,3,6\r\n" +
-"taskB = 9,1,4\r\n" +
-"taskC = 1,2,4\r\n" +
+"taskA = 2,7,6\r\n" +
+"taskB = 2,9,4\r\n" +
+"taskC = 4,3,8\r\n" +
+"\r\n" +
+"# Visit 2 only. Novel transfer sequences and trial counts.\r\n" +
+"transfer3 = 6,1,8\r\n" +
+"transfer5 = 1,3,7,9,5\r\n" +
+"retentionTrialsPerTask = 6\r\n" +
+"transferTrials        = 9\r\n" +
+"retentionOrder        = Random\r\n" +
 "\r\n" +
 "# Grid geometry in metres. Changing these mid-study breaks comparability.\r\n" +
 "gridWidth    = 0.50\r\n" +
