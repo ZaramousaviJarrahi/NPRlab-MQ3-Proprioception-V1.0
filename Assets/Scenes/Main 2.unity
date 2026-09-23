@@ -1491,6 +1491,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   ShowTopMostFoldoutHeaderGroup: 1
+  highlightClosestTarget: 0
   _targetPrefab: {fileID: 1010785803753136644, guid: 9440d6d9b6a57324baa6578a3925d570, type: 3}
   _pivotDistance: 4
   _pivotScale: 3
@@ -1695,9 +1696,11 @@ MonoBehaviour:
   homeTowardParticipant: 0.15
   homeMarkerSize: 0.05
   anchorToParticipant: 1
-  taskA: 7,3,6
-  taskB: 9,1,4
-  taskC: 1,2,4
+  taskA: 2,7,6
+  taskB: 2,9,4
+  taskC: 4,3,8
+  transfer3: 6,1,8
+  transfer5: 1,3,7,9,5
   showAllNineObjects: 1
   currentSequence: 
   trialsStarted: 0
@@ -1754,6 +1757,9 @@ MonoBehaviour:
   blockedTaskOrder: A,B,C
   avoidImmediateRepeats: 1
   randomSeed: 0
+  retentionTrialsPerTask: 6
+  transferTrials: 9
+  retentionOrder: 0
   currentBlock: 
   trialIndex: 0
   totalTrials: 0

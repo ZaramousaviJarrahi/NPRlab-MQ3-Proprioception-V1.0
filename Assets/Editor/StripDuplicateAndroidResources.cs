@@ -51,7 +51,8 @@ public class StripDuplicateAndroidResources : IPreprocessBuildWithReport,
                 if (!Directory.Exists(full)) continue;
                 foreach (string file in Directory.GetFiles(full, "*", SearchOption.AllDirectories))
                 {
-                    if (!SyncDuplicate.IsMatch(Path.GetFileName(file))) continue;
+                    string nm = Path.GetFileName(file);
+                    if (IsProtected(nm) || !SyncDuplicate.IsMatch(nm)) continue;
                     try { File.Delete(file); removed++; } catch { }
                 }
             }
@@ -68,6 +69,22 @@ public class StripDuplicateAndroidResources : IPreprocessBuildWithReport,
 
     // "name 2.ext", "name 10.ext" - a space, digits, then the extension.
     private static readonly Regex SyncDuplicate = new Regex(@" \d+\.[A-Za-z0-9]+$");
+
+    // Never delete these, whatever their name looks like.
+    //
+    // This project's real working scene is called "Main 2.unity" - it began as a sync
+    // duplicate and then became the scene the study actually runs on. It matches the
+    // duplicate pattern exactly. Nothing under Library/Bee should ever be a source scene,
+    // so this guard should never fire; it exists because the cost of being wrong is
+    // deleting the scene, and the cost of the guard is nothing.
+    private static readonly string[] NeverDelete = { ".unity", ".prefab", ".asmdef" };
+
+    private static bool IsProtected(string fileName)
+    {
+        foreach (string ext in NeverDelete)
+            if (fileName.EndsWith(ext, System.StringComparison.OrdinalIgnoreCase)) return true;
+        return false;
+    }
 
     public void OnPostGenerateGradleAndroidProject(string path)
     {
@@ -105,6 +122,7 @@ public class StripDuplicateAndroidResources : IPreprocessBuildWithReport,
         {
             string name = Path.GetFileName(file);
 
+            if (IsProtected(name)) continue;
             bool isSyncDuplicate = SyncDuplicate.IsMatch(name);
             bool isInvalidResource = IsInsideRes(file) && HasInvalidResourceName(name);
 

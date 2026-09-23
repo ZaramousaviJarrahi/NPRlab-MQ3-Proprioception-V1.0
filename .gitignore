@@ -110,3 +110,7 @@ OpenXR Package Settings [0-9]*.asset
 # macOS / file-sync clutter
 .DS_Store
 *[0-9].meta.bak
+
+# Debug leftovers from the September 2026 move out of iCloud.
+/_dupes_removed/
+/.utmp/
