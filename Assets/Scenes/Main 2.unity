@@ -1777,7 +1777,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: bea8e162af9a64c34b89fa2a20a1f23f, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  showInHeadset: 0
+  showInHeadset: 1
   distance: 1
   heightOffset: 0.4
   textSize: 0.9

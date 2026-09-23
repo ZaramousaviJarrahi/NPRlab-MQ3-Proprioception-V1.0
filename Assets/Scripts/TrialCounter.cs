@@ -107,7 +107,18 @@ public class TrialCounter : MonoBehaviour
 
         _captureCountInCurrentTrial++;
 
-        if (_captureCountInCurrentTrial >= CapturesRequired())
+        // Diagnostic, visible in the headset via VRStatusDisplay.
+        //
+        // A Transfer-5 trial is ending after three grasps even though the code asks the
+        // TaskSequencer how long the current task is. Rather than reason about why from
+        // the outside, this prints what the app actually believes at the moment it decides:
+        // which task it thinks it is running, how many grasps that task needs, and how many
+        // it has counted. Whichever of those three is wrong, this will name it.
+        int required = CapturesRequired();
+        Debug.Log($"grasp {_captureCountInCurrentTrial}/{required}   task={currentTask}   " +
+                  $"seq=[{(GetComponent<TaskSequencer>() != null ? GetComponent<TaskSequencer>().SequenceTextFor(currentTask) : "no sequencer")}]");
+
+        if (_captureCountInCurrentTrial >= required)
         {
             _captureCountInCurrentTrial = 0;
             _trialCount++;
