@@ -122,6 +122,11 @@ public class TargetController : MonoBehaviour
             return;
         }
 
+        // Last check before the ball is consumed: was there time for a real reach since the
+        // previous grasp? Placed here, after the closest-target test, so a rejected
+        // pass-through leaves this target completely untouched and still grabbable.
+        if (!ControlManager.Singleton.TryRegisterCapture(index + 1)) return;
+
         _meshRenderer.material = _disappearingMaterial;
         _startDisappearing = true;
         _grabbable.enabled = false;

@@ -194,6 +194,11 @@ public class ExperimenterControls : MonoBehaviour
     public void ClearTargets()
     {
         if (_taskSequencer != null) _taskSequencer.ClearTargets();
+
+        // Clearing the board mid-trial means "abandon this one". SessionRunner now refuses to
+        // start a new trial while one is running, so without this the start button would keep
+        // refusing after a trial that could not be completed.
+        if (_sessionRunner != null) _sessionRunner.AbandonCurrentTrial();
     }
 
     public void RecentreGrid()

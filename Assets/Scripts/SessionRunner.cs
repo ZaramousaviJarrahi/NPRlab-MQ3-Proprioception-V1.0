@@ -490,10 +490,20 @@ public class SessionRunner : MonoBehaviour
     public float lastForeperiod = -1f;
     [Tooltip("Cue onset to the hand leaving home, seconds. -1 if not measured.")]
     public float lastReactionTime = -1f;
+    [Tooltip("The trial number the three values above belong to. DataRecorder checks this " +
+             "before writing them, so a late measurement can never be filed under the " +
+             "wrong trial.")]
+    public int lastTrialStartNumber = -1;
+    [Tooltip("True if the hand was on the home marker when the foreperiod began but had left it " +
+             "before the cue fired - a false start. The trial still ran, and its reaction time " +
+             "cannot be measured.")]
+    public bool lastTrialFalseStart = false;
 
     private HomeGate _homeGate;
     private Coroutine _startRoutine;
     private Coroutine _rtRoutine;
+    private bool _trialRunning;
+    private bool _numberingWarned;
 
     // Called by the experimenter's start-trial button.
     public void StartNextTrial()
@@ -513,6 +523,21 @@ public class SessionRunner : MonoBehaviour
             return;
         }
 
+        // A trial that is UNDERWAY also blocks a new one. The guard above only covered the
+        // arming window, which ends the moment the cue fires - so a second press once the
+        // participant was already reaching ran the arming sequence again underneath the live
+        // trial. That reset lastTrialHomeVerified to false and lastReactionTime to -1 partway
+        // through, which is why a trial could record home-verified TRUE on its first grasp and
+        // FALSE on the rest, and it left a stray coroutine that started the NEXT trial by
+        // itself when the hand came back to home.
+        if (_trialRunning)
+        {
+            Debug.LogWarning($"SessionRunner: trial {trialIndex + 1} is still running - ignoring " +
+                             "the press. Wait for the completion tone. If this trial cannot be " +
+                             "finished, press clear-targets (Y) to abandon it, then start again.");
+            return;
+        }
+
         _startRoutine = StartCoroutine(ArmAndStartTrial());
     }
 
@@ -526,7 +551,14 @@ public class SessionRunner : MonoBehaviour
         if (_homeGate != null) _homeGate.ResetForNewTrial();
 
         lastTrialHomeVerified = false;
+        lastTrialFalseStart = false;
         lastReactionTime = -1f;
+
+        // Whether the hand was at home when ARMING finished. This is not the same thing as
+        // whether it was there when the cue fired, and conflating the two is what made the
+        // reaction times meaningless: the foreperiod is one to five seconds long, so a flag set
+        // before it says only that the hand was on the marker up to five seconds earlier.
+        bool homeAtArm = false;
 
         // ---- wait for the hand at home ----
         if (requireHandAtHome && _homeGate != null)
@@ -545,9 +577,9 @@ public class SessionRunner : MonoBehaviour
                 yield return null;
             }
 
-            lastTrialHomeVerified = _homeGate.atHome;
+            homeAtArm = _homeGate.atHome;
 
-            if (!lastTrialHomeVerified)
+            if (!homeAtArm)
             {
                 // Started anyway, and said so. A trial that silently began from an unknown
                 // position is the one outcome there is no way to correct for afterwards.
@@ -558,7 +590,7 @@ public class SessionRunner : MonoBehaviour
         }
         else if (_homeGate != null)
         {
-            lastTrialHomeVerified = _homeGate.atHome;   // not gating, but still recording
+            homeAtArm = _homeGate.atHome;   // not gating, but still recording
         }
 
         // ---- warning, then a variable foreperiod ----
@@ -586,6 +618,21 @@ public class SessionRunner : MonoBehaviour
 
         float cueOnset = Time.time;
         int trialNumber = trialIndex + 1;          // captured NOW, not read again later
+        _trialRunning = true;
+        lastTrialStartNumber = trialNumber;
+
+        // Read AT cue onset, which is the only moment the question means anything: was the hand
+        // on the marker when the go signal appeared? Everything downstream depends on this - the
+        // reach distance is only the intended one if the reach started from home, and reaction
+        // time is only measurable if there is a departure from home still to come.
+        lastTrialHomeVerified = _homeGate != null && _homeGate.atHome;
+        lastTrialFalseStart = homeAtArm && !lastTrialHomeVerified;
+        if (lastTrialFalseStart)
+        {
+            Debug.LogWarning($"Trial {trialNumber}: FALSE START - the hand was on the home marker "
+                           + "when the foreperiod began but had left it before the cue. The reach did "
+                           + "not start from home, so its distance is not the intended one.");
+        }
         if (_taskSequencer != null) _taskSequencer.StartTrial();
         if (_cues != null) _cues.Go();
         waitingToStartTrial = false;
@@ -597,7 +644,7 @@ public class SessionRunner : MonoBehaviour
         _startRoutine = null;
 
         // ---- reaction time: cue onset to the hand leaving home ----
-        if (_homeGate != null)
+        if (_homeGate != null && lastTrialHomeVerified)
         {
             // The previous trial's measurement is stopped first. It waits up to ten seconds
             // for the hand to leave home, and if it is still running when the next trial
@@ -607,6 +654,17 @@ public class SessionRunner : MonoBehaviour
             if (_rtRoutine != null) StopCoroutine(_rtRoutine);
             _rtRoutine = StartCoroutine(MeasureReactionTime(cueOnset, trialNumber));
         }
+        else if (_homeGate != null)
+        {
+            // Not measurable, and saying so is the whole point. Reaction time is cue onset to
+            // the hand LEAVING home; if the hand was not at home when the cue fired there is no
+            // departure to time. Left running, the measurement would sit waiting and then catch
+            // the hand returning home after the trial, reporting that as a several-second
+            // "reaction time".
+            lastReactionTime = -1f;
+            Debug.LogWarning($"Trial {trialNumber}: reaction time not measured - the hand was not " +
+                             "at home when the cue fired.");
+        }
     }
 
     // Reaction time is the interval that carried the effect in the original - it roughly
@@ -615,7 +673,16 @@ public class SessionRunner : MonoBehaviour
     // cue onset to the moment the fingertip leaves the home radius.
     private System.Collections.IEnumerator MeasureReactionTime(float cueOnset, int trialNumber)
     {
-        float giveUpAt = Time.time + 10f;
+        // One and a half seconds. The hand is confirmed on the marker at cue onset before this
+        // runs, so the next departure IS the response, and a response that has not begun within
+        // 1.5 s of the go signal is not a reaction time - it is a lost trial.
+        //
+        // The window has to be this tight because of what a loose one does. At ten seconds, and
+        // then at three, the measurement outlived the reach and caught the hand returning towards
+        // home afterwards, then leaving again - which is why a recorded run showed reaction times
+        // of 2.4 to 2.9 s on thirteen trials whose FIRST GRASP had already happened at around one
+        // second. A number that large is arriving from after the event it claims to precede.
+        float giveUpAt = Time.time + 1.5f;
 
         while (Time.time < giveUpAt)
         {
@@ -633,12 +700,14 @@ public class SessionRunner : MonoBehaviour
         lastReactionTime = -1f;
         _rtRoutine = null;
         Debug.LogWarning($"Trial {trialNumber}: reaction time NOT measured - the hand was never "
-                       + "seen leaving home within 10s. Either it was not at home to begin with, or "
-                       + "hand tracking dropped out during the reach.");
+                       + "seen leaving home within 1.5s of the cue. Either hand tracking dropped out, "
+                       + "or the hand had drifted off the marker. The trial itself is fine; only its "
+                       + "reaction time is missing.");
     }
 
     private void HandleTrialComplete()
     {
+        _trialRunning = false;
         if (!sessionPlanned) return;
         StartCoroutine(AdvanceAfterRecordingCompletes());
     }
@@ -667,6 +736,29 @@ public class SessionRunner : MonoBehaviour
     }
 
     public string CurrentBlockLabel() => sessionPlanned ? currentBlock : "";
+
+    /// Releases the in-progress lock without completing the trial, so a trial that cannot be
+    /// finished - a target that never registers, a participant who stops - does not leave the
+    /// start button refusing every press for the rest of the session. Wired to clear-targets,
+    /// because clearing the board is what the experimenter does when abandoning a trial anyway.
+    ///
+    /// The trial is NOT advanced: pressing start again re-runs the same trial number, and the
+    /// abandoned attempt stays in the CSV with however many grasps it got. Say so in your notes,
+    /// because the CSV will show one trial number with more grasps than the task has targets.
+    public void AbandonCurrentTrial()
+    {
+        if (!_trialRunning && _startRoutine == null) return;
+        if (_startRoutine != null) { StopCoroutine(_startRoutine); _startRoutine = null; }
+        if (_rtRoutine != null) { StopCoroutine(_rtRoutine); _rtRoutine = null; }
+        _trialRunning = false;
+        waitingToStartTrial = true;
+        Debug.LogWarning($"SessionRunner: trial {trialIndex + 1} ABANDONED by the experimenter. "
+                       + "Pressing start will run trial " + (trialIndex + 1) + " again. Note this "
+                       + "in your session log - the abandoned attempt is still in the CSV.");
+    }
+
+    /// The trial number this component thinks is running, counting from 1.
+    public int CurrentTrialNumber() => trialIndex + 1;
 
     // ---------------------------------------------------------------- display
 

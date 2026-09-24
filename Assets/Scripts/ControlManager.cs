@@ -50,6 +50,13 @@ public class ControlManager : NetworkBehaviour
     [SerializeField] private float _pivotDistance = 0.2f;
     [SerializeField] private float _pivotScale = 0.2f;
     [SerializeField] private float _captureableRange = 0.3f;
+
+    [Tooltip("Shortest believable gap between two grasps, in seconds. A target that registers "
+           + "sooner than this after the previous one was not reached for - it was passed "
+           + "through on the way somewhere else. Legitimate consecutive grasps in this task "
+           + "are 0.40 to 0.60 s apart, so 0.25 s rejects pass-throughs with room to spare.")]
+    public float minSecondsBetweenCaptures = 0.25f;
+    private float _lastCaptureTime = -1f;
     [SerializeField] private Material _lineRendererMaterial;
     // [SerializeField] private OVRHand _leftHand;
     // [SerializeField] private OVRHand _rightHand;
@@ -928,6 +935,31 @@ public class ControlManager : NetworkBehaviour
 
         usedLeft = dl <= dr;
         distance = usedLeft ? dl : dr;
+        return true;
+    }
+
+    /// Asks whether a grasp is far enough after the last one to be a real reach, and starts the
+    /// clock again if it is. Returns false for a pass-through, which is then ignored.
+    ///
+    /// Capture goes to whichever target is closest, and on the way between two targets the hand
+    /// passes close to the ones in between. A recorded trial caught exactly this: position 8 was
+    /// taken 152 ms after position 9, from 9.7 cm away, while the hand was travelling from 9 to
+    /// position 4. It consumed the trial's third and last grasp, so the target the sequence
+    /// actually called for was never reached, and the trial ended one target short.
+    ///
+    /// Rejecting is the lesser harm here, and it is not silent. An ignored pass-through leaves
+    /// the ball in place for the participant to grasp properly; a recorded one produces a trial
+    /// that looks complete and is not.
+    public bool TryRegisterCapture(int positionNumber) {
+        if (_lastCaptureTime > 0f && Time.time - _lastCaptureTime < minSecondsBetweenCaptures) {
+            Debug.LogWarning($"Target at position {positionNumber}: grasp IGNORED - only "
+                           + $"{(Time.time - _lastCaptureTime) * 1000f:F0} ms after the previous "
+                           + $"grasp, under the {minSecondsBetweenCaptures * 1000f:F0} ms minimum. "
+                           + "This is a target passed through on the way to another one. The ball "
+                           + "stays put and can still be grasped.");
+            return false;
+        }
+        _lastCaptureTime = Time.time;
         return true;
     }
 
