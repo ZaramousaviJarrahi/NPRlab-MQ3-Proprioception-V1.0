@@ -132,23 +132,98 @@ public class ControlManager : NetworkBehaviour
         OVRPlugin.HandState _leftHandState = default(OVRPlugin.HandState);
         OVRPlugin.HandState _rightHandState = default(OVRPlugin.HandState);
 
+        // OVRPlugin reports bone positions in the rig's TRACKING space. Everything this
+        // study measures - the target grid, the recorded target positions, endpoint error -
+        // is in WORLD space. The two coincide only while OVRCameraRig sits at the world
+        // origin unrotated. It currently does, so this conversion is a no-op today and the
+        // recorded numbers are unchanged. But nothing enforces it, and anything that moves
+        // the rig (the Locomotor in this scene, a recentre) would otherwise corrupt
+        // endpoint error silently, with no error message at all. Endpoint error is a
+        // primary outcome, so convert explicitly rather than relying on the rig staying put.
+        Transform tracking = TrackingSpace();
+
         if (OVRPlugin.GetHandState(OVRPlugin.Step.Render, OVRPlugin.Hand.HandLeft, ref _leftHandState))
         {
-            _leftIndexTipPosition = new Vector3(_leftHandState.BonePositions[(int)OVRPlugin.BoneId.XRHand_IndexTip].x,
-                _leftHandState.BonePositions[(int)OVRPlugin.BoneId.XRHand_IndexTip].y,
-                - _leftHandState.BonePositions[(int)OVRPlugin.BoneId.XRHand_IndexTip].z);
+            _leftIndexTipPosition = IndexTipToWorld(_leftHandState, tracking);
         }
-        if (OVRPlugin.GetHandState(OVRPlugin.Step.Render, OVRPlugin.Hand.HandRight, ref _leftHandState))
+        // This second call used to pass 'ref _leftHandState' while querying the RIGHT hand,
+        // and then read the tip back out of _leftHandState. It gave the right answer only
+        // because the left tip had already been extracted just above: _rightHandState was
+        // dead, and swapping the order of these two blocks would have broken the right
+        // hand's position with no compile error and no warning.
+        if (OVRPlugin.GetHandState(OVRPlugin.Step.Render, OVRPlugin.Hand.HandRight, ref _rightHandState))
         {
-            _rightIndexTipPosition = new Vector3(_leftHandState.BonePositions[(int)OVRPlugin.BoneId.XRHand_IndexTip].x,
-                _leftHandState.BonePositions[(int)OVRPlugin.BoneId.XRHand_IndexTip].y,
-                - _leftHandState.BonePositions[(int)OVRPlugin.BoneId.XRHand_IndexTip].z);
+            _rightIndexTipPosition = IndexTipToWorld(_rightHandState, tracking);
         }
         _leftFingerTipSphere.position = _leftIndexTipPosition;
         _rightFingerTipSphere.position = _rightIndexTipPosition;
     }
 
+    // The index-fingertip bone, converted from OVRPlugin's tracking-space, right-handed
+    // convention into Unity world space. The (x, y, -z) flip is the handedness change and
+    // is unchanged from the original code; TransformPoint is the tracking -> world step.
+    private static Vector3 IndexTipToWorld(OVRPlugin.HandState state, Transform trackingSpace)
+    {
+        var tip = state.BonePositions[(int)OVRPlugin.BoneId.XRHand_IndexTip];
+        Vector3 inTrackingSpace = new Vector3(tip.x, tip.y, -tip.z);
+        return trackingSpace != null ? trackingSpace.TransformPoint(inTrackingSpace)
+                                     : inTrackingSpace;
+    }
+
+    private OVRCameraRig _cameraRig;
+    private bool _trackingSpaceChecked = false;
+
+    // Cached tracking-space transform, with a one-time report of whether it is where the
+    // rest of the code assumes it is. Logged rather than assumed, because a silent offset
+    // here would bias every endpoint-error measurement without anything looking wrong.
+    private Transform TrackingSpace()
+    {
+        if (_cameraRig == null) _cameraRig = FindAnyObjectByType<OVRCameraRig>();
+        Transform tracking = _cameraRig != null ? _cameraRig.trackingSpace : null;
+
+        if (!_trackingSpaceChecked && tracking != null)
+        {
+            _trackingSpaceChecked = true;
+            bool atOrigin = tracking.position.sqrMagnitude < 1e-6f
+                            && Quaternion.Angle(tracking.rotation, Quaternion.identity) < 0.1f;
+            if (atOrigin)
+            {
+                Debug.Log("ControlManager: tracking space is at the world origin, so fingertip " +
+                          "positions and target positions are already in the same frame.");
+            }
+            else
+            {
+                Debug.LogWarning("ControlManager: the rig's tracking space is NOT at the world origin " +
+                                 $"(position {tracking.position}, rotation {tracking.rotation.eulerAngles}). " +
+                                 "Fingertip positions are converted correctly from here on, but any data " +
+                                 "recorded before this fix, with the rig in this state, has endpoint errors " +
+                                 "that are wrong by that offset.");
+            }
+        }
+        return tracking;
+    }
+
+    // Removes destroyed targets from both lists before anything reads them.
+    //
+    // WHY: a captured target fades and is destroyed, but it was still sitting in
+    // _targetsInRange. FindClosestTarget then read .position off a destroyed object and
+    // threw a NullReferenceException - 28 times in one 13-trial session. Update() aborts
+    // at that point, so for that frame the closest target is never recalculated. Capture()
+    // depends on the closest target, so this was quietly corrupting the thing that decides
+    // whether a grasp counts.
+    private void PruneDestroyedTargets() {
+        for (int i = _targets.Count - 1; i >= 0; i--)
+            if (_targets[i] == null) _targets.RemoveAt(i);
+
+        for (int i = _targetsInRange.Count - 1; i >= 0; i--)
+            if (_targetsInRange[i] == null) _targetsInRange.RemoveAt(i);
+
+        if (_closestTarget == null) _closestTarget = null;   // collapse a destroyed ref to a real null
+    }
+
     private void FindTargetsInRange() {
+        PruneDestroyedTargets();
+
         for (int i = 0; i < _targets.Count; i++)
         {
             if (Vector3.Distance(_leftIndexTipPosition, _targets[i].position) < _captureableRange || Vector3.Distance(_rightIndexTipPosition, _targets[i].position) < _captureableRange)
@@ -826,6 +901,34 @@ public class ControlManager : NetworkBehaviour
 
     public Transform GetClosestTarget() {
         return _closestTarget;
+    }
+
+    // The tracked index fingertips, in WORLD space. Exposed so other components - the home
+    // gate, and anything measuring reaction time - can ask where the hand is without each
+    // one re-reading and re-converting the bone data and risking a different answer.
+    public Vector3 LeftIndexTip  => _leftIndexTipPosition;
+    public Vector3 RightIndexTip => _rightIndexTipPosition;
+
+    // Distance from the nearer fingertip to a point. Returns false when neither hand is
+    // usable, so callers can tell "far away" from "not tracked" - which matter differently:
+    // one is the participant's hand being elsewhere, the other is no data at all.
+    public bool TryNearestFingertipDistance(Vector3 point, out float distance, out bool usedLeft)
+    {
+        float dl = Vector3.Distance(_leftIndexTipPosition, point);
+        float dr = Vector3.Distance(_rightIndexTipPosition, point);
+
+        // An untracked hand reports the origin. A real fingertip is never there, so this
+        // separates "no hand" from "hand far away" without needing a tracking-confidence API.
+        bool leftOk  = _leftIndexTipPosition.sqrMagnitude  > 0.0001f;
+        bool rightOk = _rightIndexTipPosition.sqrMagnitude > 0.0001f;
+
+        if (!leftOk && !rightOk) { distance = float.PositiveInfinity; usedLeft = false; return false; }
+        if (!leftOk)  { distance = dr; usedLeft = false; return true; }
+        if (!rightOk) { distance = dl; usedLeft = true;  return true; }
+
+        usedLeft = dl <= dr;
+        distance = usedLeft ? dl : dr;
+        return true;
     }
 
     public void TargetCaptured(Transform _capturedTargetTransform) {

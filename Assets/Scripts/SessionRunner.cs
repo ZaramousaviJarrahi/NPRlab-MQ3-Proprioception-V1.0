@@ -56,6 +56,27 @@ public class SessionRunner : MonoBehaviour
              "and a stable mean.")]
     public int transferTrials = 9;
 
+    [Tooltip("Retention trials per task IN EACH TEST ORDER. 3 x 3 tasks x 2 orders = 18, " +
+             "matching Shea & Morgan exactly.")]
+    public int retentionTrialsPerTaskPerOrder = 3;
+
+    public enum RetentionTestOrder { BlockedFirst, RandomFirst }
+
+    [Tooltip("COUNTERBALANCE THIS ACROSS PARTICIPANTS, balanced within each practice group " +
+             "(12 and 12 within each group of 24).\n\n" +
+             "Retention is tested under BOTH a blocked order and a random order - this only " +
+             "sets which half comes first. Without counterbalancing, the second half always " +
+             "carries the warm-up and fatigue of the first, and that would load onto the " +
+             "test-order comparison.")]
+    public RetentionTestOrder retentionTestOrder = RetentionTestOrder.BlockedFirst;
+
+    public enum TransferTaskOrder { Transfer3First, Transfer5First }
+
+    [Tooltip("COUNTERBALANCE THIS ACROSS PARTICIPANTS. Whichever transfer task comes second " +
+             "is done by a more fatigued participant who has also just had practice on a " +
+             "novel task.")]
+    public TransferTaskOrder transferTaskOrder = TransferTaskOrder.Transfer3First;
+
     public enum RetentionOrder { Random, Blocked }
 
     [Tooltip("STILL AN OPEN DECISION in the study plan - confirm it before collecting.\n\n" +
@@ -203,42 +224,112 @@ public class SessionRunner : MonoBehaviour
     // The transfer tasks always come after retention and always in that order. Retention
     // must be measured before any exposure to novel material, and doing the five-element
     // task first would contaminate the three-element one.
+    // Visit 2: retention under BOTH test orders, then the two transfer tasks.
+    //
+    // WHY BOTH ORDERS, and why this is not a detail:
+    //
+    // Shea & Morgan's retention result was not a main effect of practice schedule. It came
+    // out of the interaction between how people PRACTISED and how they were TESTED:
+    // blocked-practice participants tested in a random order were dramatically worse, while
+    // blocked-blocked and random-random did not differ significantly. They got that from 18
+    // retention trials delivered as 9 in a blocked sequence and 9 in a random sequence, with
+    // the order of the two halves counterbalanced across subjects.
+    //
+    // Run all 18 in a single order instead and there is no test-order factor, so H2 cannot
+    // be tested in the form the original result took. Picking one order is also not neutral:
+    // whichever you choose hands one practice group a test that matches their training, and
+    // there is no principled basis for deciding which group should get that advantage.
+    // Testing under both removes the problem rather than splitting it, and costs no extra
+    // trials - the same 18 divide in half.
+    //
+    // The block label records WHICH half each trial was in, because retention test order is
+    // now a within-subjects factor and a factor that is not in the data cannot be analysed.
     private void BuildVisit2Plan()
     {
         var trained = new[] { TrialCounter.BlockedTask.TaskA,
                               TrialCounter.BlockedTask.TaskB,
                               TrialCounter.BlockedTask.TaskC };
 
-        var retention = new List<TrialCounter.BlockedTask>();
-        foreach (var t in trained)
-            for (int i = 0; i < retentionTrialsPerTask; i++) retention.Add(t);
-
-        if (retentionOrder == RetentionOrder.Random)
+        // --- the blocked-order half: n of each task in turn, in this participant's order ---
+        var blockedHalf = new List<TrialCounter.BlockedTask>();
+        foreach (string letter in blockedTaskOrder.Split(','))
         {
-            System.Random rng = randomSeed == 0 ? new System.Random() : new System.Random(randomSeed);
-            for (int i = retention.Count - 1; i > 0; i--)
+            TrialCounter.BlockedTask task = letter.Trim().ToUpper() switch
             {
-                int j = rng.Next(i + 1);
-                (retention[i], retention[j]) = (retention[j], retention[i]);
+                "B" => TrialCounter.BlockedTask.TaskB,
+                "C" => TrialCounter.BlockedTask.TaskC,
+                _   => TrialCounter.BlockedTask.TaskA,
+            };
+            for (int i = 0; i < retentionTrialsPerTaskPerOrder; i++) blockedHalf.Add(task);
+        }
+
+        // --- the random-order half: the same n of each task, shuffled, no immediate repeats ---
+        var randomHalf = new List<TrialCounter.BlockedTask>();
+        foreach (var t in trained)
+            for (int i = 0; i < retentionTrialsPerTaskPerOrder; i++) randomHalf.Add(t);
+
+        // Seeded from the participant's own seed, so the order is reproducible and can be
+        // regenerated later from allocation.csv alone if a file is ever lost.
+        System.Random rng = randomSeed == 0 ? new System.Random() : new System.Random(randomSeed);
+        for (int i = randomHalf.Count - 1; i > 0; i--)
+        {
+            int j = rng.Next(i + 1);
+            (randomHalf[i], randomHalf[j]) = (randomHalf[j], randomHalf[i]);
+        }
+        for (int i = 1; i < randomHalf.Count; i++)
+        {
+            if (randomHalf[i] != randomHalf[i - 1]) continue;
+            for (int k = i + 1; k < randomHalf.Count; k++)
+            {
+                if (randomHalf[k] == randomHalf[i - 1]) continue;
+                (randomHalf[i], randomHalf[k]) = (randomHalf[k], randomHalf[i]);
+                break;
             }
         }
 
-        foreach (var t in retention) { _order.Add(t); _blockOf.Add("Retention"); }
+        bool blockedFirst = retentionTestOrder == RetentionTestOrder.BlockedFirst;
 
-        for (int i = 0; i < transferTrials; i++)
-        { _order.Add(TrialCounter.BlockedTask.Transfer3); _blockOf.Add("Transfer-3"); }
+        if (blockedFirst)
+        {
+            foreach (var t in blockedHalf) { _order.Add(t); _blockOf.Add("Retention-Blocked"); }
+            foreach (var t in randomHalf)  { _order.Add(t); _blockOf.Add("Retention-Random"); }
+        }
+        else
+        {
+            foreach (var t in randomHalf)  { _order.Add(t); _blockOf.Add("Retention-Random"); }
+            foreach (var t in blockedHalf) { _order.Add(t); _blockOf.Add("Retention-Blocked"); }
+        }
 
-        for (int i = 0; i < transferTrials; i++)
-        { _order.Add(TrialCounter.BlockedTask.Transfer5); _blockOf.Add("Transfer-5"); }
+        // --- transfer: both novel tasks, order counterbalanced ---
+        if (transferTrials != 3)
+        {
+            Debug.LogWarning($"SessionRunner: transferTrials is {transferTrials}, but the study plan "
+                           + "specifies 3 per transfer task, matching Shea & Morgan. Transfer measures "
+                           + "performance on NOVEL material, so every extra trial is the participant "
+                           + "learning the transfer task and diluting the thing being measured. Set it "
+                           + "to 3 in the Inspector unless you are deliberately piloting.");
+        }
+
+        bool t3First = transferTaskOrder == TransferTaskOrder.Transfer3First;
+        var firstTransfer  = t3First ? TrialCounter.BlockedTask.Transfer3 : TrialCounter.BlockedTask.Transfer5;
+        var secondTransfer = t3First ? TrialCounter.BlockedTask.Transfer5 : TrialCounter.BlockedTask.Transfer3;
+        string firstLabel  = t3First ? "Transfer-3" : "Transfer-5";
+        string secondLabel = t3First ? "Transfer-5" : "Transfer-3";
+
+        for (int i = 0; i < transferTrials; i++) { _order.Add(firstTransfer);  _blockOf.Add(firstLabel); }
+        for (int i = 0; i < transferTrials; i++) { _order.Add(secondTransfer); _blockOf.Add(secondLabel); }
 
         trialIndex = 0;
         totalTrials = _order.Count;
         sessionPlanned = true;
 
-        Debug.Log($"VISIT 2 planned: {retention.Count} retention ({retentionOrder}) + " +
-                  $"{transferTrials} Transfer-3 + {transferTrials} Transfer-5 = {totalTrials} trials.");
+        Debug.Log($"VISIT 2 planned: retention {blockedHalf.Count} blocked-order + {randomHalf.Count} "
+                + $"random-order ({(blockedFirst ? "blocked first" : "random first")}), then "
+                + $"{transferTrials} {firstLabel} + {transferTrials} {secondLabel} = {totalTrials} trials. "
+                + "Block column records which retention half each trial belongs to.");
 
-        ExportPlan($"Visit 2 - retention ({retentionOrder}) then transfer", retentionOrder == RetentionOrder.Random);
+        ExportPlan($"Visit 2 - retention in both orders ({(blockedFirst ? "blocked first" : "random first")}), "
+                 + $"then transfer ({firstLabel} first)", true);
         PrepareCurrentTrial();
     }
 
@@ -372,6 +463,38 @@ public class SessionRunner : MonoBehaviour
         }
     }
 
+    [Header("Trial start - home gate and foreperiod")]
+    [Tooltip("ON: a trial does not begin until the participant's hand is detected at the home " +
+             "marker. This is what makes the start position standard rather than hoped for - " +
+             "endpoint error is measured from wherever the reach actually began.\n\n" +
+             "OFF: the trial starts on your button press, and whether the hand was at home is " +
+             "still recorded, so compliance can be checked afterwards.")]
+    public bool requireHandAtHome = true;
+
+    [Tooltip("How long to wait for a confirmed hand at home before starting anyway. Hand " +
+             "tracking drops out intermittently, and a participant left sitting in silence " +
+             "with no feedback is worse than a flagged trial. The trial is marked as " +
+             "unverified in the log so it can be excluded.")]
+    public float homeWaitTimeoutSeconds = 10f;
+
+    [Tooltip("Foreperiod options in seconds, chosen at random each trial. A VARIABLE " +
+             "foreperiod is the point: a fixed one lets the participant anticipate the go " +
+             "signal and start moving before it, which destroys reaction time as a measure - " +
+             "and reaction time is where Shea & Morgan's effect was largest.")]
+    public float[] foreperiodSeconds = { 1f, 3f, 5f };
+
+    [Header("Trial start - status (read-only)")]
+    [Tooltip("True if the hand was confirmed at home when this trial's cue fired.")]
+    public bool lastTrialHomeVerified = false;
+    [Tooltip("Foreperiod used on the last trial, seconds.")]
+    public float lastForeperiod = -1f;
+    [Tooltip("Cue onset to the hand leaving home, seconds. -1 if not measured.")]
+    public float lastReactionTime = -1f;
+
+    private HomeGate _homeGate;
+    private Coroutine _startRoutine;
+    private Coroutine _rtRoutine;
+
     // Called by the experimenter's start-trial button.
     public void StartNextTrial()
     {
@@ -382,11 +505,136 @@ public class SessionRunner : MonoBehaviour
             return;
         }
 
+        // Guard against a second press while a trial is already being armed - otherwise two
+        // foreperiods run at once and the sequence appears twice.
+        if (_startRoutine != null)
+        {
+            Debug.LogWarning("SessionRunner: a trial is already starting - ignoring the extra press.");
+            return;
+        }
+
+        _startRoutine = StartCoroutine(ArmAndStartTrial());
+    }
+
+    // The trial-start sequence: hand at home, warning tone, variable foreperiod, then cue
+    // onset. Cue onset is also the go signal, as in the original - the stimulus light both
+    // identified the task and started the clock. A separate preview would hand the
+    // participant planning time before the clock starts, flattening reaction time.
+    private System.Collections.IEnumerator ArmAndStartTrial()
+    {
+        if (_homeGate == null) _homeGate = GetComponent<HomeGate>();
+        if (_homeGate != null) _homeGate.ResetForNewTrial();
+
+        lastTrialHomeVerified = false;
+        lastReactionTime = -1f;
+
+        // ---- wait for the hand at home ----
+        if (requireHandAtHome && _homeGate != null)
+        {
+            float waitStarted = Time.time;
+            bool complained = false;
+
+            while (!_homeGate.atHome && Time.time - waitStarted < homeWaitTimeoutSeconds)
+            {
+                if (!complained && Time.time - waitStarted > 2f)
+                {
+                    complained = true;
+                    Debug.Log($"Waiting for the hand at home ({_homeGate.Describe()}) - "
+                            + "tell the participant to rest their hand on the marker.");
+                }
+                yield return null;
+            }
+
+            lastTrialHomeVerified = _homeGate.atHome;
+
+            if (!lastTrialHomeVerified)
+            {
+                // Started anyway, and said so. A trial that silently began from an unknown
+                // position is the one outcome there is no way to correct for afterwards.
+                Debug.LogWarning($"Trial {trialIndex + 1}: STARTED WITHOUT CONFIRMING the hand at "
+                               + $"home after {homeWaitTimeoutSeconds:F0}s ({_homeGate.Describe()}). "
+                               + "This trial is NOT position-verified - exclude it from analysis.");
+            }
+        }
+        else if (_homeGate != null)
+        {
+            lastTrialHomeVerified = _homeGate.atHome;   // not gating, but still recording
+        }
+
+        // ---- warning, then a variable foreperiod ----
+        if (_cues != null) _cues.Warning();
+
+        float fp = (foreperiodSeconds != null && foreperiodSeconds.Length > 0)
+                     ? foreperiodSeconds[Random.Range(0, foreperiodSeconds.Length)]
+                     : 2f;
+        lastForeperiod = fp;
+        yield return new WaitForSeconds(fp);
+
+        // ---- cue onset = go ----
+        //
+        // Re-checked here, not only at the button press: this coroutine waits for the hand
+        // and then for the foreperiod, up to fifteen seconds in total, and the session can
+        // finish during that wait. Indexing _order without re-checking threw an
+        // ArgumentOutOfRangeException at the end of a session.
+        if (trialIndex >= _order.Count)
+        {
+            Debug.Log("SessionRunner: the session finished while this trial was arming - "
+                    + "nothing started.");
+            _startRoutine = null;
+            yield break;
+        }
+
+        float cueOnset = Time.time;
+        int trialNumber = trialIndex + 1;          // captured NOW, not read again later
         if (_taskSequencer != null) _taskSequencer.StartTrial();
+        if (_cues != null) _cues.Go();
         waitingToStartTrial = false;
 
-        Debug.Log($"Trial {trialIndex + 1}/{totalTrials} ({currentBlock}) - " +
-                  $"{_order[trialIndex]} - instruct: {(_taskSequencer != null ? _taskSequencer.currentSequence : "")}");
+        Debug.Log($"Trial {trialNumber}/{totalTrials} ({currentBlock}) - {_order[trialIndex]} - "
+                + $"instruct: {(_taskSequencer != null ? _taskSequencer.currentSequence : "")} "
+                + $"| foreperiod {fp:F0}s | home verified: {lastTrialHomeVerified}");
+
+        _startRoutine = null;
+
+        // ---- reaction time: cue onset to the hand leaving home ----
+        if (_homeGate != null)
+        {
+            // The previous trial's measurement is stopped first. It waits up to ten seconds
+            // for the hand to leave home, and if it is still running when the next trial
+            // arms, it catches THAT trial's movement and logs it under the wrong number -
+            // which is what produced impossible 3-4 second "reaction times" recorded before
+            // their own trial had even started.
+            if (_rtRoutine != null) StopCoroutine(_rtRoutine);
+            _rtRoutine = StartCoroutine(MeasureReactionTime(cueOnset, trialNumber));
+        }
+    }
+
+    // Reaction time is the interval that carried the effect in the original - it roughly
+    // doubled under random practice during acquisition and roughly halved at retention -
+    // because that is where task identification and movement planning happen. Measured from
+    // cue onset to the moment the fingertip leaves the home radius.
+    private System.Collections.IEnumerator MeasureReactionTime(float cueOnset, int trialNumber)
+    {
+        float giveUpAt = Time.time + 10f;
+
+        while (Time.time < giveUpAt)
+        {
+            if (_homeGate.LastLeftHomeTime > cueOnset)
+            {
+                lastReactionTime = _homeGate.LastLeftHomeTime - cueOnset;
+                Debug.Log($"Trial {trialNumber}: reaction time {lastReactionTime * 1000f:F0} ms "
+                        + "(cue onset to hand leaving home).");
+                _rtRoutine = null;
+                yield break;
+            }
+            yield return null;
+        }
+
+        lastReactionTime = -1f;
+        _rtRoutine = null;
+        Debug.LogWarning($"Trial {trialNumber}: reaction time NOT measured - the hand was never "
+                       + "seen leaving home within 10s. Either it was not at home to begin with, or "
+                       + "hand tracking dropped out during the reach.");
     }
 
     private void HandleTrialComplete()

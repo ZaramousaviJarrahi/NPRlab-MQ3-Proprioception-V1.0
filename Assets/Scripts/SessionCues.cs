@@ -37,6 +37,8 @@ public class SessionCues : MonoBehaviour
     private AudioSource _source;
     private AudioClip _click;
     private AudioClip _chime;
+    private AudioClip _warning;
+    private AudioClip _go;
 
     void Start()
     {
@@ -47,6 +49,32 @@ public class SessionCues : MonoBehaviour
 
         _click = Tone("cue_click", new[] { 880f }, 0.07f);
         _chime = Tone("cue_chime", new[] { 523.25f, 659.25f, 783.99f }, 0.16f);   // C-E-G
+
+        // Warning and go are deliberately LOW and SHORT, and clearly different from each
+        // other. The warning says "a trial is about to start"; the go coincides with the
+        // sequence appearing. They must not be confusable with the trial-complete click,
+        // which is higher and arrives at a completely different moment - a participant who
+        // mistakes one for the other starts moving at the wrong time, and reaction time is
+        // measured from the go.
+        _warning = Tone("cue_warning", new[] { 330f }, 0.10f);                    // E4
+        _go      = Tone("cue_go",      new[] { 660f }, 0.06f);                    // E5
+    }
+
+    // Sounded before the foreperiod: "get ready, hand at home".
+    public void Warning()
+    {
+        if (_source == null || _warning == null) return;
+        _source.volume = volume;
+        _source.PlayOneShot(_warning);
+    }
+
+    // Sounded at cue onset, the instant the sequence appears. Reaction time is measured
+    // from here to the hand leaving the home marker.
+    public void Go()
+    {
+        if (_source == null || _go == null) return;
+        _source.volume = volume;
+        _source.PlayOneShot(_go);
     }
 
     public void TrialComplete()

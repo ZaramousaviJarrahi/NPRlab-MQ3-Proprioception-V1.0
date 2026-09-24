@@ -58,6 +58,10 @@ public class TargetController : MonoBehaviour
             // information the hidden-hand condition is meant to remove.
             bool isClosest = transform == ControlManager.Singleton.GetClosestTarget();
 
+            // Remembered so Capture() can tell a legitimate grasp from a stray event even
+            // after the closest target has moved on. See the note there.
+            if (isClosest) _lastClosestTime = Time.time;
+
             _collider.enabled = isClosest;
             _grabbable.enabled = isClosest;
 
@@ -80,24 +84,61 @@ public class TargetController : MonoBehaviour
         GameObject.Destroy(gameObject);
     }
 
-    public void Capture() {
-        if (transform == ControlManager.Singleton.GetClosestTarget())
-        {
-            _meshRenderer.material = _disappearingMaterial;
-            _startDisappearing = true;
-            _grabbable.enabled = false;
-            _handGrabInteractable.enabled = false;
-            _grabInteractable.enabled = false;
-            _audioSource.PlayOneShot(_audioClip);
+    [Tooltip("How long after a target stops being the closest one a grasp of it is still " +
+             "accepted, in seconds. Covers the gap between the hand closing and the select " +
+             "event arriving - during which the hand has already started moving.")]
+    [SerializeField] private float _closestGraceSeconds = 0.5f;
 
-            if (_random)
-            {
-                ControlManager.Singleton.SendCaptureToServer(hash_for_random, transform.position);
-            }
-            else
-            {
-                ControlManager.Singleton.SendCaptureToServer(index, transform.position);
-            }
+    private float _lastClosestTime = -1f;
+
+    // WHY THIS IS NOT JUST "am I the closest target right now":
+    //
+    // It used to be. The problem is that the closest target is recomputed every frame from
+    // the fingertip position, and the select event arrives a frame or two AFTER the hand has
+    // closed and started moving away - by which time a different target can be closest. The
+    // check then failed, Capture() returned in silence, the target never faded, and no row
+    // was recorded. A grasp that the participant made and saw simply did not exist in the
+    // data, with nothing anywhere saying so.
+    //
+    // The check was also redundant. Update() enables Grabbable ONLY on the closest target,
+    // so a select event on this object is already proof that it was the legitimate one at
+    // the moment the hand closed. What is kept here is a grace window, which protects
+    // against a genuinely stray event without throwing away real grasps, plus logging: a
+    // rejected grasp is now a warning, because silent data loss is the worst outcome.
+    public void Capture() {
+        if (_startDisappearing) return;     // already captured - never count a grasp twice
+
+        bool closestNow = transform == ControlManager.Singleton.GetClosestTarget();
+        bool closestRecently = _lastClosestTime > 0f
+                               && (Time.time - _lastClosestTime) <= _closestGraceSeconds;
+
+        if (!closestNow && !closestRecently)
+        {
+            float ago = _lastClosestTime > 0f ? Time.time - _lastClosestTime : -1f;
+            Debug.LogWarning($"Target at position {index + 1}: grasp IGNORED - it was not the "
+                           + $"closest target (last closest {(ago < 0f ? "never" : ago.ToString("F2") + "s ago")}). "
+                           + "Nothing was recorded for this grasp. If this happens repeatedly, raise "
+                           + "Closest Grace Seconds on the Target prefab.");
+            return;
+        }
+
+        _meshRenderer.material = _disappearingMaterial;
+        _startDisappearing = true;
+        _grabbable.enabled = false;
+        _handGrabInteractable.enabled = false;
+        _grabInteractable.enabled = false;
+        _audioSource.PlayOneShot(_audioClip);
+
+        Debug.Log($"Target at position {index + 1} CAPTURED "
+                + $"(closest now: {closestNow}, within grace: {closestRecently}).");
+
+        if (_random)
+        {
+            ControlManager.Singleton.SendCaptureToServer(hash_for_random, transform.position);
+        }
+        else
+        {
+            ControlManager.Singleton.SendCaptureToServer(index, transform.position);
         }
     }
 

@@ -156,7 +156,8 @@ public class TrialCounter : MonoBehaviour
         }
 
         // Drawn below the "Start Experiment" (y=10) and "Hide/Show Hands" (y=70) buttons.
-        label += $"   [grasps this trial: {_captureCountInCurrentTrial}/{capturesPerTrial}]";
+        // CapturesRequired(), so a five-target trial reads "x/5" and not "x/3".
+        label += $"   [grasps this trial: {_captureCountInCurrentTrial}/{CapturesRequired()}]";
         GUI.Label(new Rect(10, 130, 500, 30), label);
 
         if (showSimulateCaptureButton)

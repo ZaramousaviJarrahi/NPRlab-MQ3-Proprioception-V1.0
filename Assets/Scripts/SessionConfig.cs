@@ -87,6 +87,17 @@ public class SessionConfig : MonoBehaviour
 #endif
     }
 
+    // Sequence overrides get their own warning, loud, with both values in it.
+    private static void WarnSequenceOverride(string which, string inspectorValue, string fileValue)
+    {
+        if (inspectorValue == fileValue) return;
+        Debug.LogWarning($"SessionConfig: {which} is being OVERRIDDEN by session_config.txt - " +
+                         $"Inspector says '{inspectorValue}', the file says '{fileValue}', and the " +
+                         "FILE WINS. The trained sequences are matched on reach distance and " +
+                         "direction change; an override breaks that matching unless the new set is " +
+                         "also matched. Remove the line from session_config.txt unless you meant this.");
+    }
+
     private void Apply(string[] lines)
     {
         var controls  = GetComponent<ExperimenterControls>();
@@ -182,19 +193,29 @@ public class SessionConfig : MonoBehaviour
                     if (runner != null && int.TryParse(val, out int tt))
                     { runner.transferTrials = Mathf.Max(0, tt); applied.Add($"transferTrials={tt}"); }
                     break;
+                // Superseded on 24 Sep. Retention is now tested under BOTH orders in every
+                // session, so there is no single order to set - only which half comes first,
+                // which is retentionTestOrder in allocation.csv. Left in place, because a key
+                // that silently does nothing is worse than one that says so: someone setting
+                // this would otherwise believe they had configured the retention test.
                 case "retentionorder":
-                    if (runner != null)
-                    {
-                        runner.retentionOrder = val.ToLowerInvariant().StartsWith("b")
-                            ? SessionRunner.RetentionOrder.Blocked
-                            : SessionRunner.RetentionOrder.Random;
-                        applied.Add($"retentionOrder={runner.retentionOrder}");
-                    }
+                    Debug.LogWarning($"SessionConfig: 'retentionOrder = {val}' is IGNORED. Retention is "
+                                   + "now tested under both a blocked order and a random order in every "
+                                   + "session (9 trials each), per Shea & Morgan. Which half comes first "
+                                   + "is set per participant by the 'retentionTestOrder' column in "
+                                   + "allocation.csv. Remove this line from session_config.txt.");
                     break;
 
-                case "taska": if (sequencer != null) { sequencer.taskA = val; applied.Add($"taskA={val}"); } break;
-                case "taskb": if (sequencer != null) { sequencer.taskB = val; applied.Add($"taskB={val}"); } break;
-                case "taskc": if (sequencer != null) { sequencer.taskC = val; applied.Add($"taskC={val}"); } break;
+                // A sequence override is NEVER routine. The trained sequences are matched on
+                // reach distance and direction change, and that matching is what keeps task
+                // difficulty from masquerading as a practice-schedule effect. This file wins
+                // over the Inspector, so a stale line here silently replaces a matched set
+                // with an unmatched one, the session runs to completion, and the data looks
+                // perfectly clean while being unusable. It happened. So it is a warning that
+                // names both values, not a quiet note in a summary line.
+                case "taska": if (sequencer != null) { WarnSequenceOverride("taskA", sequencer.taskA, val); sequencer.taskA = val; applied.Add($"taskA={val}"); } break;
+                case "taskb": if (sequencer != null) { WarnSequenceOverride("taskB", sequencer.taskB, val); sequencer.taskB = val; applied.Add($"taskB={val}"); } break;
+                case "taskc": if (sequencer != null) { WarnSequenceOverride("taskC", sequencer.taskC, val); sequencer.taskC = val; applied.Add($"taskC={val}"); } break;
 
                 case "gridwidth":
                     if (sequencer != null && float.TryParse(val, NumberStyles.Float, CultureInfo.InvariantCulture, out float gw))
@@ -257,6 +278,8 @@ public class SessionConfig : MonoBehaviour
             int cCond = IndexOf(head, "condition");
             int cOrder = IndexOf(head, "taskorder");
             int cSeed = IndexOf(head, "seed");
+            int cRetOrder = IndexOf(head, "retentiontestorder");
+            int cTraOrder = IndexOf(head, "transfertaskorder");
 
             if (cPid < 0)
             {
@@ -290,6 +313,23 @@ public class SessionConfig : MonoBehaviour
                     int.TryParse(cell[cSeed].Trim(), out int sd))
                 {
                     runner.randomSeed = sd; applied.Add($"seed={sd}");
+                }
+
+                // Visit 2 counterbalancing. Decided in advance for every participant and read
+                // from the allocation table for the same reason the condition is: an order set
+                // by hand on the day is one typo away from an unbalanced design, and nothing
+                // about the resulting data would look wrong.
+                if (cRetOrder >= 0 && cRetOrder < cell.Length && runner != null)
+                {
+                    string v = cell[cRetOrder].Trim().ToLowerInvariant();
+                    if (v.StartsWith("r"))      { runner.retentionTestOrder = SessionRunner.RetentionTestOrder.RandomFirst;  applied.Add("retentionTestOrder=RandomFirst"); }
+                    else if (v.StartsWith("b")) { runner.retentionTestOrder = SessionRunner.RetentionTestOrder.BlockedFirst; applied.Add("retentionTestOrder=BlockedFirst"); }
+                }
+                if (cTraOrder >= 0 && cTraOrder < cell.Length && runner != null)
+                {
+                    string v = cell[cTraOrder].Trim().ToLowerInvariant();
+                    if (v.Contains("5"))      { runner.transferTaskOrder = SessionRunner.TransferTaskOrder.Transfer5First; applied.Add("transferTaskOrder=Transfer5First"); }
+                    else if (v.Contains("3")) { runner.transferTaskOrder = SessionRunner.TransferTaskOrder.Transfer3First; applied.Add("transferTaskOrder=Transfer3First"); }
                 }
 
                 summary = $"ALLOCATION {controls.ParticipantId()}: " + string.Join("  ", applied);

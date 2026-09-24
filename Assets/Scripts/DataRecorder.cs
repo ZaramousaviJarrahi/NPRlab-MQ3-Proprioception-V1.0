@@ -121,7 +121,23 @@ public class DataRecorder : MonoBehaviour
 
         WriteRow(d, sinceSpawn, sinceFirstGrasp);
 
-        int perTrial = _trialCounter != null ? _trialCounter.capturesPerTrial : 3;
+        // CapturesRequired(), not capturesPerTrial.
+        //
+        // capturesPerTrial is a fixed Inspector value of 3. CapturesRequired() asks the
+        // sequencer how many positions the CURRENT task actually has - three for the trained
+        // tasks, five for the greater-complexity transfer task.
+        //
+        // Reading the fixed field here made DataRecorder disagree with TrialCounter, which
+        // uses the method. On a five-target trial the counter correctly waited for five
+        // grasps while the recorder started a new trial every three, so one real trial was
+        // written out as chunks of three under invented trial numbers, with the sequence
+        // running across the boundaries. Three transfer trials became five fake ones, and
+        // time_since_spawn_s came out blank for the invented ones.
+        //
+        // Nothing in the app failed and no grasp was lost - the data was simply relabelled
+        // into a shape that never happened. Two components answering the same question in
+        // two different ways is how that happens.
+        int perTrial = _trialCounter != null ? _trialCounter.CapturesRequired() : 3;
         if (_graspInTrial >= perTrial)
         {
             trialsCompleted++;

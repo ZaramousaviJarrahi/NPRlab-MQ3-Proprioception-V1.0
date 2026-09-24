@@ -1431,6 +1431,9 @@ GameObject:
   - component: {fileID: 365879014}
   - component: {fileID: 365879015}
   - component: {fileID: 365879016}
+  - component: {fileID: 365879017}
+  - component: {fileID: 365879018}
+  - component: {fileID: 365879019}
   m_Layer: 0
   m_Name: ControlManager
   m_TagString: Untagged
@@ -1704,6 +1707,8 @@ MonoBehaviour:
   showAllNineObjects: 1
   currentSequence: 
   trialsStarted: 0
+  homeMarkerMaterial: {fileID: 0}
+  homeMarkerColour: {r: 1, g: 1, b: 1, a: 1}
 --- !u!114 &365879011
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1721,6 +1726,10 @@ MonoBehaviour:
   - Debug
   - Canvas
   - Cube
+  handsOnlyGrasping: 1
+  controllerGrabObjectNames:
+  - ControllerGrabInteractor
+  - ControllerDistanceGrabInteractor
 --- !u!114 &365879012
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1737,7 +1746,7 @@ MonoBehaviour:
   participantPrefix: P
   visitNumber: 1
   useControllerButtons: 1
-  useKeyboard: 1
+  useKeyboard: 0
   showShortcutList: 1
   showTestButtons: 1
 --- !u!114 &365879013
@@ -1758,13 +1767,25 @@ MonoBehaviour:
   avoidImmediateRepeats: 1
   randomSeed: 0
   retentionTrialsPerTask: 6
-  transferTrials: 9
+  transferTrials: 3
+  retentionTrialsPerTaskPerOrder: 3
+  retentionTestOrder: 0
+  transferTaskOrder: 0
   retentionOrder: 0
   currentBlock: 
   trialIndex: 0
   totalTrials: 0
-  sessionPlanned: 0
+  sessionPlanned: 1
   waitingToStartTrial: 0
+  requireHandAtHome: 1
+  homeWaitTimeoutSeconds: 10
+  foreperiodSeconds:
+  - 1
+  - 3
+  - 5
+  lastTrialHomeVerified: 0
+  lastForeperiod: -1
+  lastReactionTime: -1
 --- !u!114 &365879014
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1777,7 +1798,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: bea8e162af9a64c34b89fa2a20a1f23f, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  showInHeadset: 1
+  showInHeadset: 0
   distance: 1
   heightOffset: 0.4
   textSize: 0.9
@@ -1818,6 +1839,60 @@ MonoBehaviour:
   clickOnTrialComplete: 0
   chimeOnTaskChange: 1
   volume: 1
+--- !u!114 &365879017
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 365878999}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 40e22c02590ad471f87e5af27747c3ad, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  mode: 0
+  show: 1
+  panelAboveGrid: 0.2
+  panelSideways: 0
+  panelHeightMetres: 0.13
+  digitHeightMetres: 0.05
+  digitForwardOffset: 0.055
+  inkColour: {r: 1, g: 1, b: 1, a: 1}
+--- !u!114 &365879018
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 365878999}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 2945638d9f11a47e4acb2d7ceafa21cf, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  enableFileLog: 1
+  fileName: device_log.txt
+  maxKilobytes: 2048
+--- !u!114 &365879019
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 365878999}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 0fc3e24e3745d4d918c8a3a804d0ac14, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  homeRadius: 0.08
+  exitHysteresis: 0.02
+  atHome: 0
+  handTracked: 0
+  distanceToHome: -1
+  logCalibration: 1
+  logEverySeconds: 1
 --- !u!114 &377332078
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -2108,6 +2183,10 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 11400000, guid: 126d619cf4daa52469682f85c1378b4a, type: 3}
       propertyPath: controllerDrivenHandPosesType
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 11400010, guid: 126d619cf4daa52469682f85c1378b4a, type: 3}
+      propertyPath: useFixedUpdateForTracking
       value: 1
       objectReference: {fileID: 0}
     m_RemovedComponents: []

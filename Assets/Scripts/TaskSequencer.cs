@@ -117,7 +117,7 @@ public class TaskSequencer : MonoBehaviour
     }
 
     // Reads the sequence for whichever task the TrialCounter is currently set to.
-    private List<int> CurrentSequencePositions()
+    public List<int> CurrentSequencePositions()
     {
         string raw = SequenceTextFor(_trialCounter != null ? _trialCounter.currentTask
                                                             : TrialCounter.BlockedTask.TaskA);
@@ -197,6 +197,64 @@ public class TaskSequencer : MonoBehaviour
 
     private GameObject _homeMarker;
 
+    [Tooltip("Material for the home marker. ASSIGN ONE for headset builds - see the note in " +
+             "ApplyHomeMarkerMaterial. Left empty, a material is built at runtime, which works " +
+             "in the Editor but can come out invisible in a build.")]
+    public Material homeMarkerMaterial;
+
+    [Tooltip("Colour used only when no material is assigned above.")]
+    public Color homeMarkerColour = Color.white;
+
+    // WHY THIS IS NOT JUST "set the colour to white":
+    //
+    // GameObject.CreatePrimitive assigns the BUILT-IN Standard shader. This project renders
+    // with URP, which cannot draw that shader - so the marker came out magenta or invisible
+    // even though the object existed, was active and was in the right place.
+    //
+    // The runtime fallback below finds a URP shader by name, which works in the Editor. It is
+    // NOT reliable in a player build: a shader referenced only through Shader.Find, with no
+    // material in any scene using it, can be stripped out of the build entirely, and
+    // Shader.Find then returns null on the headset while working perfectly on the desktop.
+    //
+    // So assigning homeMarkerMaterial in the Inspector is the reliable path - a material
+    // asset referenced from the scene is always included. The fallback exists so the marker
+    // still appears if nobody assigns one.
+    private void ApplyHomeMarkerMaterial()
+    {
+        Renderer r = _homeMarker.GetComponent<Renderer>();
+        if (r == null) return;
+
+        if (homeMarkerMaterial != null)
+        {
+            r.material = homeMarkerMaterial;
+            Debug.Log("Home marker using the assigned material.");
+            return;
+        }
+
+        Shader s = Shader.Find("Universal Render Pipeline/Unlit");
+        if (s == null) s = Shader.Find("Universal Render Pipeline/Lit");
+        if (s == null) s = Shader.Find("Sprites/Default");
+
+        if (s != null)
+        {
+            var m = new Material(s);
+            if (m.HasProperty("_BaseColor")) m.SetColor("_BaseColor", homeMarkerColour);
+            if (m.HasProperty("_Color"))     m.SetColor("_Color", homeMarkerColour);
+            r.material = m;
+            Debug.Log($"Home marker built a runtime material from shader '{s.name}'. For the "
+                    + "headset build, assign Home Marker Material in the Inspector instead - a "
+                    + "runtime-found shader can be stripped from a build and the marker would "
+                    + "then be invisible on the device but fine in the Editor.");
+        }
+        else
+        {
+            r.material.color = homeMarkerColour;
+            Debug.LogError("TaskSequencer: could not find a URP shader for the home marker, so it "
+                         + "is using the built-in one, which URP cannot render - the marker will "
+                         + "be magenta or invisible. Assign Home Marker Material in the Inspector.");
+        }
+    }
+
     // The fixed start point for every trial. Matched task distances are measured
     // from here, so moving it changes the geometry of the whole study.
     public Vector3 HomePosition()
@@ -224,9 +282,7 @@ public class TaskSequencer : MonoBehaviour
             Collider col = _homeMarker.GetComponent<Collider>();
             if (col != null) Destroy(col);
 
-            // White, so it is clearly not one of the red targets.
-            Renderer r = _homeMarker.GetComponent<Renderer>();
-            if (r != null) r.material.color = Color.white;
+            ApplyHomeMarkerMaterial();
         }
 
         _homeMarker.SetActive(true);
@@ -234,9 +290,82 @@ public class TaskSequencer : MonoBehaviour
         _homeMarker.transform.localScale = Vector3.one * homeMarkerSize;
     }
 
+    private bool _matchCheckDone = false;
+
+    // Guards the one requirement the study calls non-negotiable: the three trained tasks
+    // must be matched on total reach distance and direction change, or blocked-vs-random
+    // is confounded with task difficulty.
+    //
+    // This is checked rather than trusted because the sequences live in TWO places - these
+    // Inspector fields and session_config.txt - and the file wins silently. A stale line in
+    // that file replaces a matched set with an unmatched one, the session runs normally to
+    // the end, and the recorded data looks perfectly clean while being unusable. That is
+    // exactly what happened with 7,3,6 / 9,1,4 / 1,2,4, where Task C was 47% shorter than
+    // the other two. Nothing in the app said a word about it.
+    //
+    // Deliberately duplicates the small parsing loop instead of refactoring the live
+    // sequence code: this runs immediately before real data is recorded, and a validator
+    // is not worth the risk of changing the thing it validates.
+    public void ValidateMatchedSequences()
+    {
+        string[] names = { "taskA", "taskB", "taskC" };
+        string[] raw   = { taskA,   taskB,   taskC  };
+        float[]  total = new float[3];
+        float[]  turn  = new float[3];
+
+        for (int i = 0; i < 3; i++)
+        {
+            var p = new List<int>();
+            foreach (string part in raw[i].Split(','))
+                if (int.TryParse(part.Trim(), out int n) && n >= 1 && n <= 9) p.Add(n);
+
+            if (p.Count < 3)
+            {
+                Debug.LogError($"TaskSequencer: {names[i]} = '{raw[i]}' is not a usable 3-target "
+                             + "sequence. Not starting a matched-set check.");
+                return;
+            }
+
+            for (int j = 0; j < p.Count - 1; j++)
+                total[i] += Vector3.Distance(GridPosition(p[j]), GridPosition(p[j + 1]));
+
+            turn[i] = Vector3.Angle(GridPosition(p[1]) - GridPosition(p[0]),
+                                    GridPosition(p[2]) - GridPosition(p[1]));
+        }
+
+        float longest  = Mathf.Max(total[0], Mathf.Max(total[1], total[2]));
+        float shortest = Mathf.Min(total[0], Mathf.Min(total[1], total[2]));
+        float spreadCm = (longest - shortest) * 100f;
+        float spreadPc = shortest > 0.001f ? (longest - shortest) / shortest * 100f : 999f;
+
+        string detail = $"{names[0]}={raw[0]} {total[0] * 100f:F1}cm/{turn[0]:F0}deg, "
+                      + $"{names[1]}={raw[1]} {total[1] * 100f:F1}cm/{turn[1]:F0}deg, "
+                      + $"{names[2]}={raw[2]} {total[2] * 100f:F1}cm/{turn[2]:F0}deg";
+
+        // 1 cm of tolerance: the matched families on this grid are exact, so anything
+        // beyond rounding means a different set, not a rounding difference.
+        if (spreadCm > 1.0f)
+        {
+            Debug.LogError("TaskSequencer: THE THREE TRAINED SEQUENCES ARE NOT MATCHED. "
+                         + $"Longest minus shortest = {spreadCm:F1} cm ({spreadPc:F0}%). {detail}. "
+                         + "Task difficulty will be confounded with practice schedule and the data "
+                         + "will not be usable for the blocked-vs-random comparison. Check the "
+                         + "TaskSequencer Inspector AND session_config.txt - the file overrides the "
+                         + "Inspector. The matched set is 2,7,6 / 2,9,4 / 4,3,8.");
+        }
+        else
+        {
+            Debug.Log($"TaskSequencer: sequences matched to within {spreadCm:F2} cm. {detail}");
+        }
+    }
+
     public void StartTrial()
     {
         if (ControlManager.Singleton == null) return;
+
+        // Checked once, here rather than in Start(), so it runs after SessionConfig has
+        // applied session_config.txt and before the first grasp is ever recorded.
+        if (!_matchCheckDone) { _matchCheckDone = true; ValidateMatchedSequences(); }
 
         List<int> sequence = CurrentSequencePositions();
         if (sequence.Count == 0)
