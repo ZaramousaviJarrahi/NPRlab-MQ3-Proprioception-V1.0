@@ -114,3 +114,6 @@ OpenXR Package Settings [0-9]*.asset
 # Debug leftovers from the September 2026 move out of iCloud.
 /_dupes_removed/
 /.utmp/
+
+# Local pre-edit safety copies, not part of the project
+_backups/

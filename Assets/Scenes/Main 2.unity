@@ -1434,6 +1434,8 @@ GameObject:
   - component: {fileID: 365879017}
   - component: {fileID: 365879018}
   - component: {fileID: 365879019}
+  - component: {fileID: 365879021}
+  - component: {fileID: 365879020}
   m_Layer: 0
   m_Name: ControlManager
   m_TagString: Untagged
@@ -1499,6 +1501,7 @@ MonoBehaviour:
   _pivotDistance: 4
   _pivotScale: 3
   _captureableRange: 0.25
+  minSecondsBetweenCaptures: 0.25
   _lineRendererMaterial: {fileID: 2100000, guid: 1bd9d19105baea14aa7a20466ae8d0b3, type: 2}
   _leftFingerTipSphere: {fileID: 853312117}
   _rightFingerTipSphere: {fileID: 316397478}
@@ -1676,6 +1679,7 @@ MonoBehaviour:
   visitLabel: Visit1
   rowsWritten: 0
   trialsCompleted: 0
+  orderErrors: 0
   currentFilePath: 
 --- !u!114 &365879010
 MonoBehaviour:
@@ -1707,8 +1711,8 @@ MonoBehaviour:
   showAllNineObjects: 1
   currentSequence: 
   trialsStarted: 0
-  homeMarkerMaterial: {fileID: 0}
-  homeMarkerColour: {r: 1, g: 1, b: 1, a: 1}
+  homeMarkerMaterial: {fileID: 2100000, guid: 4890186e1a8e2445cb5c858c68ba7a27, type: 2}
+  homeMarkerColour: {r: 0.29411766, g: 0.29411766, b: 0.29411766, a: 1}
 --- !u!114 &365879011
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1767,7 +1771,7 @@ MonoBehaviour:
   avoidImmediateRepeats: 1
   randomSeed: 0
   retentionTrialsPerTask: 6
-  transferTrials: 3
+  transferTrials: 9
   retentionTrialsPerTaskPerOrder: 3
   retentionTestOrder: 0
   transferTaskOrder: 0
@@ -1778,7 +1782,7 @@ MonoBehaviour:
   sessionPlanned: 1
   waitingToStartTrial: 0
   requireHandAtHome: 1
-  homeWaitTimeoutSeconds: 10
+  homeWaitWarnEverySeconds: 10
   foreperiodSeconds:
   - 1
   - 3
@@ -1786,6 +1790,8 @@ MonoBehaviour:
   lastTrialHomeVerified: 0
   lastForeperiod: -1
   lastReactionTime: -1
+  lastTrialStartNumber: -1
+  lastTrialFalseStart: 0
 --- !u!114 &365879014
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1874,6 +1880,14 @@ MonoBehaviour:
   enableFileLog: 1
   fileName: device_log.txt
   maxKilobytes: 2048
+  headerLinesAlwaysKept: 120
+  ignoreLinesContaining:
+  - is in range
+  - is out of range
+  - Despawning
+  - instantiated at
+  - objects to despawn
+  - Reset
 --- !u!114 &365879019
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1886,13 +1900,136 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 0fc3e24e3745d4d918c8a3a804d0ac14, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  homeRadius: 0.08
-  exitHysteresis: 0.02
-  atHome: 0
+  homeRadius: 0.05
+  exitHysteresis: 0.07
+  atHome: 1
   handTracked: 0
   distanceToHome: -1
   logCalibration: 1
   logEverySeconds: 1
+--- !u!114 &365879020
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 365878999}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: eeb86911a81ed4c81b1f68728f796308, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  homeGate: {fileID: 0}
+  farDistance: 0.5
+  slowestIntervalSeconds: 0.7
+  fastestIntervalSeconds: 0.07
+  clickHz: 900
+  clickSeconds: 0.035
+  arrivedHz: 1400
+  arrivedSeconds: 0.18
+  volume: 0.6
+  maxGuidanceSeconds: 12
+  logGuidance: 1
+  guiding: 0
+  currentIntervalSeconds: -1
+  arrivedBeepPlayed: 0
+--- !u!82 &365879021
+AudioSource:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 365878999}
+  m_Enabled: 1
+  serializedVersion: 4
+  OutputAudioMixerGroup: {fileID: 0}
+  m_audioClip: {fileID: 0}
+  m_Resource: {fileID: 0}
+  m_PlayOnAwake: 1
+  m_Volume: 1
+  m_Pitch: 1
+  Loop: 0
+  Mute: 0
+  Spatialize: 0
+  SpatializePostEffects: 0
+  Priority: 128
+  DopplerLevel: 1
+  MinDistance: 1
+  MaxDistance: 500
+  Pan2D: 0
+  rolloffMode: 0
+  BypassEffects: 0
+  BypassListenerEffects: 0
+  BypassReverbZones: 0
+  rolloffCustomCurve:
+    serializedVersion: 2
+    m_Curve:
+    - serializedVersion: 3
+      time: 0
+      value: 1
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0.33333334
+      outWeight: 0.33333334
+    - serializedVersion: 3
+      time: 1
+      value: 0
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0.33333334
+      outWeight: 0.33333334
+    m_PreInfinity: 2
+    m_PostInfinity: 2
+    m_RotationOrder: 4
+  panLevelCustomCurve:
+    serializedVersion: 2
+    m_Curve:
+    - serializedVersion: 3
+      time: 0
+      value: 0
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0.33333334
+      outWeight: 0.33333334
+    m_PreInfinity: 2
+    m_PostInfinity: 2
+    m_RotationOrder: 4
+  spreadCustomCurve:
+    serializedVersion: 2
+    m_Curve:
+    - serializedVersion: 3
+      time: 0
+      value: 0
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0.33333334
+      outWeight: 0.33333334
+    m_PreInfinity: 2
+    m_PostInfinity: 2
+    m_RotationOrder: 4
+  reverbZoneMixCustomCurve:
+    serializedVersion: 2
+    m_Curve:
+    - serializedVersion: 3
+      time: 0
+      value: 1
+      inSlope: 0
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0.33333334
+      outWeight: 0.33333334
+    m_PreInfinity: 2
+    m_PostInfinity: 2
+    m_RotationOrder: 4
 --- !u!114 &377332078
 MonoBehaviour:
   m_ObjectHideFlags: 0

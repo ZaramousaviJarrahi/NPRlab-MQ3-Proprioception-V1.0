@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.Serialization;
 
 // Runs a whole block of trials so the experimenter does not have to change settings
 // between them.
@@ -301,13 +302,42 @@ public class SessionRunner : MonoBehaviour
         }
 
         // --- transfer: both novel tasks, order counterbalanced ---
-        if (transferTrials != 3)
+        // TRANSFER TRIAL COUNT - the two defensible answers, and why this is set to 9.
+        //
+        // Shea & Morgan (1979) used THREE. Their method section: "Immediately following the
+        // retention trials, all subjects received one set of three trials on each of the two
+        // transfer tasks." Six transfer trials in total. So 3 is the replication-fidelity
+        // answer, and any deviation has to be justified in the methods.
+        //
+        // The study plan itself leaves the number open - its trial table reads "Trial count
+        // per transfer task TBD". So there is no plan requirement to satisfy, only a choice
+        // to defend.
+        //
+        // The problem with 3 is measurement, not fidelity: a mean of three trials on a task
+        // the participant has never seen carries a lot of trial-to-trial noise, and noise in
+        // the dependent variable attenuates the very group difference the study is powered to
+        // detect. The problem with more than 3 is contamination: transfer measures performance
+        // on NOVEL material, so trials 4 onward are partly the participant LEARNING the
+        // transfer task. Whether the contextual interference effect survives across extended
+        // transfer trials is its own open question in the literature (Meira & Tani 2001;
+        // Perez, Meira & Tani 2005).
+        //
+        // 9 resolves rather than splits this, PROVIDED the analysis is specified in advance:
+        //   - PRIMARY transfer measure  = mean of trials 1-3, directly comparable to Shea &
+        //                                 Morgan's three-trial set
+        //   - SECONDARY                 = trials 4-9, as a within-transfer learning curve
+        // On that plan the extra six trials cost nothing analytically and buy a second
+        // measure. Recorded in the supervisor agenda (23 Sep, item 2.2); awaiting sign-off.
+        // Whatever is chosen must be identical for every participant and stated in the
+        // methods.
+        if (transferTrials != 9)
         {
-            Debug.LogWarning($"SessionRunner: transferTrials is {transferTrials}, but the study plan "
-                           + "specifies 3 per transfer task, matching Shea & Morgan. Transfer measures "
-                           + "performance on NOVEL material, so every extra trial is the participant "
-                           + "learning the transfer task and diluting the thing being measured. Set it "
-                           + "to 3 in the Inspector unless you are deliberately piloting.");
+            Debug.LogWarning($"SessionRunner: transferTrials is {transferTrials}. The recommended "
+                           + "value is 9 per transfer task (supervisor agenda 23 Sep, item 2.2): it "
+                           + "gives a stable mean AND lets the first 3 be read as initial transfer. "
+                           + "The study plan leaves this count TBD, so this is a recommendation and "
+                           + "not a rule - but whatever you run must be the SAME for every "
+                           + "participant, and it must be recorded in the methods.");
         }
 
         bool t3First = transferTaskOrder == TransferTaskOrder.Transfer3First;
@@ -471,11 +501,16 @@ public class SessionRunner : MonoBehaviour
              "still recorded, so compliance can be checked afterwards.")]
     public bool requireHandAtHome = true;
 
-    [Tooltip("How long to wait for a confirmed hand at home before starting anyway. Hand " +
-             "tracking drops out intermittently, and a participant left sitting in silence " +
-             "with no feedback is worse than a flagged trial. The trial is marked as " +
-             "unverified in the log so it can be excluded.")]
-    public float homeWaitTimeoutSeconds = 10f;
+    [FormerlySerializedAs("homeWaitTimeoutSeconds")]
+    [Tooltip("How often to WARN while still waiting for the hand at home, in seconds.\n\n" +
+             "THIS IS NO LONGER A TIMEOUT. The trial does not begin until the hand is " +
+             "confirmed at the home marker, so the targets can never appear from an unknown " +
+             "start position - which is the one thing that cannot be corrected for " +
+             "afterwards. HomeAudioGuide clicks during the wait so the participant can find " +
+             "home even with the hand hidden.\n\n" +
+             "If the wait cannot be satisfied - hand tracking down, participant unwell - " +
+             "press clear-targets (Y) to abandon the trial. The warning line names that.")]
+    public float homeWaitWarnEverySeconds = 10f;
 
     [Tooltip("Foreperiod options in seconds, chosen at random each trial. A VARIABLE " +
              "foreperiod is the point: a fixed one lets the participant anticipate the go " +
@@ -500,6 +535,7 @@ public class SessionRunner : MonoBehaviour
     public bool lastTrialFalseStart = false;
 
     private HomeGate _homeGate;
+    private HomeAudioGuide _homeAudio;
     private Coroutine _startRoutine;
     private Coroutine _rtRoutine;
     private bool _trialRunning;
@@ -560,33 +596,71 @@ public class SessionRunner : MonoBehaviour
         // before it says only that the hand was on the marker up to five seconds earlier.
         bool homeAtArm = false;
 
+        // ---- make sure home is where the code thinks it is, BEFORE waiting for it ----
+        //
+        // HomePosition() is built from TaskSequencer's _gridOrigin, and that is only set by
+        // CalibrateGrid(). Until then it is the world origin, so the home marker sits wherever
+        // the headset happened to start rather than in front of the participant - and the wait
+        // below can never be satisfied. TaskSequencer.StartTrial() does calibrate, but it runs
+        // AFTER this wait, which is too late to be any use to the home gate.
+        //
+        // Costs nothing when the experimenter has already pressed Re-centre grid: it only runs
+        // when calibration has not happened at all.
+        if (_taskSequencer != null && !_taskSequencer.IsCalibrated)
+        {
+            Debug.LogWarning("SessionRunner: the grid was not calibrated yet, so the home marker "
+                           + "was not in front of the participant and the home gate could not have "
+                           + "been satisfied. Calibrating now from the CURRENT head position - the "
+                           + "participant must be seated and facing forward. Press Re-centre grid "
+                           + "before starting a session to control this moment yourself.");
+            _taskSequencer.CalibrateGrid();
+        }
+
         // ---- wait for the hand at home ----
+        //
+        // This is a GATE, not a timeout. The targets do not appear until the hand is confirmed
+        // at the home marker, so no trial can begin from an unknown start position. That used
+        // to be a 10 s timeout that started the trial anyway and flagged it for exclusion,
+        // which trades a known-bad trial for a lost one - and in Visit 3, where the hand is
+        // hidden, it is exactly the condition under test that would lose the most trials.
+        //
+        // HomeAudioGuide clicks while this waits (fast = close), so the participant can find
+        // home without seeing their hand. It is silenced the moment the wait ends, because a
+        // distance cue during the reach itself would restore the very information Visit 3
+        // removes.
+        //
+        // An unsatisfiable wait is not a hang: clear-targets (Y) calls AbandonCurrentTrial(),
+        // which stops this coroutine. The periodic warning says so, and HomeGate.Describe()
+        // distinguishes "away (34.2 cm)" from "hand not tracked".
         if (requireHandAtHome && _homeGate != null)
         {
-            float waitStarted = Time.time;
-            bool complained = false;
+            if (_homeAudio == null) _homeAudio = GetComponent<HomeAudioGuide>();
+            if (_homeAudio != null) _homeAudio.Begin();
 
-            while (!_homeGate.atHome && Time.time - waitStarted < homeWaitTimeoutSeconds)
+            float waitStarted = Time.time;
+            float warnEvery = Mathf.Max(2f, homeWaitWarnEverySeconds);
+            float nextWarning = waitStarted + warnEvery;
+
+            while (!_homeGate.atHome)
             {
-                if (!complained && Time.time - waitStarted > 2f)
+                if (Time.time >= nextWarning)
                 {
-                    complained = true;
-                    Debug.Log($"Waiting for the hand at home ({_homeGate.Describe()}) - "
-                            + "tell the participant to rest their hand on the marker.");
+                    nextWarning = Time.time + warnEvery;
+                    Debug.LogWarning($"Trial {trialIndex + 1}: STILL WAITING for the hand at home "
+                                   + $"after {Time.time - waitStarted:F0}s ({_homeGate.Describe()}). "
+                                   + "Tell the participant to rest their hand on the marker. If "
+                                   + "something is wrong, press clear-targets (Y) to abandon this "
+                                   + "trial.");
                 }
                 yield return null;
             }
 
-            homeAtArm = _homeGate.atHome;
+            if (_homeAudio != null) _homeAudio.End();
 
-            if (!homeAtArm)
-            {
-                // Started anyway, and said so. A trial that silently began from an unknown
-                // position is the one outcome there is no way to correct for afterwards.
-                Debug.LogWarning($"Trial {trialIndex + 1}: STARTED WITHOUT CONFIRMING the hand at "
-                               + $"home after {homeWaitTimeoutSeconds:F0}s ({_homeGate.Describe()}). "
-                               + "This trial is NOT position-verified - exclude it from analysis.");
-            }
+            // The loop can only exit with the hand AT home, so this is now always true. That
+            // makes lastTrialFalseStart below mean exactly one thing: the hand was on the marker
+            // when the foreperiod began but had left it before the cue fired.
+            homeAtArm = true;
         }
         else if (_homeGate != null)
         {
@@ -750,6 +824,12 @@ public class SessionRunner : MonoBehaviour
         if (!_trialRunning && _startRoutine == null) return;
         if (_startRoutine != null) { StopCoroutine(_startRoutine); _startRoutine = null; }
         if (_rtRoutine != null) { StopCoroutine(_rtRoutine); _rtRoutine = null; }
+
+        // Stopping the coroutine mid-wait leaves the home guidance clicking forever, because
+        // the End() call it was heading for never runs. Abandoning a trial has to silence it.
+        if (_homeAudio == null) _homeAudio = GetComponent<HomeAudioGuide>();
+        if (_homeAudio != null) _homeAudio.End();
+
         _trialRunning = false;
         waitingToStartTrial = true;
         Debug.LogWarning($"SessionRunner: trial {trialIndex + 1} ABANDONED by the experimenter. "

@@ -138,6 +138,14 @@ public class TaskSequencer : MonoBehaviour
     private Quaternion _gridRotation = Quaternion.identity;
     private bool _calibrated = false;
 
+    // True once CalibrateGrid() has captured where the participant is sitting.
+    //
+    // Exposed because HomePosition() and GridPosition() are meaningless before it: they are
+    // offsets from _gridOrigin, which is the world origin until calibration runs. HomeGate
+    // reads HomePosition() every frame from the moment the app starts, so without this the
+    // home gate can sit waiting for a hand to arrive at a point that is not in the room.
+    public bool IsCalibrated => _calibrated;
+
     // Captures where the participant is sitting, once. Everything after this is fixed.
     public void CalibrateGrid()
     {

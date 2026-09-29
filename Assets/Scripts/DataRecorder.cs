@@ -45,13 +45,15 @@ public class DataRecorder : MonoBehaviour
     private float _firstGraspTime = -1f;
     private bool _trialInProgress = false;
     private bool _numberingWarned = false;
+    private float _lastGraspTime = -1f;
 
     private const string Header =
         "participant_id,visit,timestamp,block,condition,task,trial_number,grasp_in_trial,target_position_number," +
         "time_since_spawn_s,time_since_first_grasp_s,endpoint_error_m," +
         "target_x,target_y,target_z,fingertip_x,fingertip_y,fingertip_z," +
         "hand_used,hands_visible,simulated,grid_width_m,grid_height_m,grid_distance_m," +
-        "expected_position_number,order_correct,home_verified,false_start,foreperiod_s,reaction_time_s";
+        "expected_position_number,order_correct,home_verified,false_start,foreperiod_s,reaction_time_s," +
+        "reach_time_s";
 
     void Start()
     {
@@ -98,6 +100,7 @@ public class DataRecorder : MonoBehaviour
         _trialInProgress = true;
         _trialSpawnTime = Time.time;
         _firstGraspTime = -1f;
+        _lastGraspTime = -1f;
         _graspInTrial = 0;
     }
 
@@ -112,11 +115,31 @@ public class DataRecorder : MonoBehaviour
             // so the grasp is still recorded; time_since_spawn will be blank for this trial.
             _trialInProgress = true;
             _trialSpawnTime = -1f;
+            _lastGraspTime = -1f;
             _graspInTrial = 0;
         }
 
         _graspInTrial++;
         if (_graspInTrial == 1) _firstGraspTime = Time.time;
+
+        // The time for THIS reach alone, measured from whatever the hand was doing before it:
+        // cue onset for the first grasp of a trial, the previous grasp for the rest.
+        //
+        // This is the column that separates reading the cue from executing the movement, and
+        // it is the reason the cue panel can stay as it is. The participant reads the diagram
+        // once, before the first reach. So grasp 1 contains cue reading, planning and moving,
+        // while grasps 2 and 3 contain moving and any re-planning but NO reading - it is
+        // already done. If a blocked-versus-random difference appears only on grasp 1 it could
+        // be either reading or planning; if it also appears on grasps 2 and 3 then reading
+        // cannot be the explanation, because the reading had finished before those reaches
+        // began.
+        //
+        // Shea & Morgan had one total time and one reaction time taken at a switch, so they
+        // could not localise the effect within the movement. This can.
+        float reachRef = _graspInTrial == 1 ? _trialSpawnTime : _lastGraspTime;
+        string reachTime = reachRef >= 0f
+            ? (Time.time - reachRef).ToString("F4", CultureInfo.InvariantCulture) : "";
+        _lastGraspTime = Time.time;
 
         string sinceSpawn = _trialSpawnTime >= 0f
             ? (Time.time - _trialSpawnTime).ToString("F4", CultureInfo.InvariantCulture) : "";
@@ -147,7 +170,7 @@ public class DataRecorder : MonoBehaviour
             }
         }
 
-        WriteRow(d, sinceSpawn, sinceFirstGrasp, expected, orderCorrect);
+        WriteRow(d, sinceSpawn, sinceFirstGrasp, expected, orderCorrect, reachTime);
 
         // CapturesRequired(), not capturesPerTrial.
         //
@@ -174,11 +197,12 @@ public class DataRecorder : MonoBehaviour
             _trialInProgress = false;
             _trialSpawnTime = -1f;
             _firstGraspTime = -1f;
+            _lastGraspTime = -1f;
         }
     }
 
     private void WriteRow(ControlManager.CaptureData d, string sinceSpawn, string sinceFirstGrasp,
-                          int expected, string orderCorrect)
+                          int expected, string orderCorrect, string reachTime)
     {
         if (_writer == null && !OpenFile()) return;
 
@@ -255,7 +279,8 @@ public class DataRecorder : MonoBehaviour
             startFactsMatch ? (_sessionRunner.lastTrialHomeVerified ? "TRUE" : "FALSE") : "",
             startFactsMatch ? (_sessionRunner.lastTrialFalseStart ? "TRUE" : "FALSE") : "",
             startFactsMatch ? Secs(_sessionRunner.lastForeperiod) : "",
-            startFactsMatch ? Secs(_sessionRunner.lastReactionTime) : ""
+            startFactsMatch ? Secs(_sessionRunner.lastReactionTime) : "",
+            reachTime
         });
 
         _writer.WriteLine(row);   // AutoFlush is on, so this reaches disk straight away
