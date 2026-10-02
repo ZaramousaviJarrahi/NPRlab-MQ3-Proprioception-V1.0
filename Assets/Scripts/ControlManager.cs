@@ -46,6 +46,24 @@ public class ControlManager : NetworkBehaviour
 
     // Fired whenever a target is spawned, so a trial's stopwatch can be started.
     public event Action OnTargetSpawned;
+
+    /// Fired when a grasp the participant made was NOT counted: a pass-through under the
+    /// minimum gap, or a select event on a target that was not the closest one.
+    ///
+    /// Rejecting those grasps is right - a pass-through consumes a target the sequence still
+    /// needs - but a rejection that exists only as a console warning is invisible at analysis
+    /// time. In a sequence-learning study the grasps the participant made and the app declined
+    /// are part of the behaviour, so DataRecorder writes them as their own rows and the count
+    /// can be reported rather than guessed at.
+    ///
+    /// int = grid position 1-9, string = a short machine-readable reason.
+    public event Action<int, string> OnGraspIgnored;
+
+    /// Called from the two places a grasp is declined, so both end up in the data.
+    public void ReportIgnoredGrasp(int positionNumber, string reason)
+    {
+        OnGraspIgnored?.Invoke(positionNumber, reason);
+    }
     [SerializeField] private GameObject _targetPrefab;
     [SerializeField] private float _pivotDistance = 0.2f;
     [SerializeField] private float _pivotScale = 0.2f;
@@ -919,6 +937,26 @@ public class ControlManager : NetworkBehaviour
     // Distance from the nearer fingertip to a point. Returns false when neither hand is
     // usable, so callers can tell "far away" from "not tracked" - which matter differently:
     // one is the participant's hand being elsewhere, the other is no data at all.
+    /// The tracked index fingertip, for callers that need the POINT rather than a distance to
+    /// one - measuring where the participant's hand actually rests, for instance. False when
+    /// neither hand is tracked, which is not the same as the hand being somewhere unhelpful.
+    public bool TryTrackedFingertip(out Vector3 tip, out bool usedLeft, bool preferLeft = false)
+    {
+        // An untracked hand reports the origin, as above.
+        bool leftOk  = _leftIndexTipPosition.sqrMagnitude  > 0.0001f;
+        bool rightOk = _rightIndexTipPosition.sqrMagnitude > 0.0001f;
+
+        if (!leftOk && !rightOk) { tip = Vector3.zero; usedLeft = false; return false; }
+
+        // With both hands tracked, something has to break the tie, and the reaching hand is
+        // the one that matters. Taking "whichever is nearer" would be wrong here: there is no
+        // reference point, and the resting hand is as likely to win.
+        bool takeLeft = preferLeft ? leftOk : !rightOk;
+        tip = takeLeft ? _leftIndexTipPosition : _rightIndexTipPosition;
+        usedLeft = takeLeft;
+        return true;
+    }
+
     public bool TryNearestFingertipDistance(Vector3 point, out float distance, out bool usedLeft)
     {
         float dl = Vector3.Distance(_leftIndexTipPosition, point);
@@ -957,6 +995,7 @@ public class ControlManager : NetworkBehaviour
                            + $"grasp, under the {minSecondsBetweenCaptures * 1000f:F0} ms minimum. "
                            + "This is a target passed through on the way to another one. The ball "
                            + "stays put and can still be grasped.");
+            ReportIgnoredGrasp(positionNumber, "passthrough_under_min_gap");
             return false;
         }
         _lastCaptureTime = Time.time;

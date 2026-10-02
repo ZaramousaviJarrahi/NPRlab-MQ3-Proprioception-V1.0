@@ -51,6 +51,16 @@ public class HomeGate : MonoBehaviour
     /// Time.time when the hand last arrived at home, or -1.
     public float LastArrivedHomeTime { get; private set; } = -1f;
 
+    /// How long the hand has been continuously at home, in seconds. 0 when it is not at home.
+    ///
+    /// This is the measurement the trial gate was missing. atHome goes true on the FIRST frame
+    /// the fingertip is inside the radius, which is a hand still travelling - so a gate that
+    /// opens on atHome alone starts the foreperiod mid-movement and the hand carries straight
+    /// on through the marker. Every trial of the 1 October session recorded a false start for
+    /// exactly that reason. Asking whether the hand is STILL here a few hundred milliseconds
+    /// later is what separates arriving from settling.
+    public float HeldSeconds => atHome && _atHomeSince >= 0f ? Time.time - _atHomeSince : 0f;
+
     [Header("Calibration logging")]
     [Tooltip("ON while you are setting the radius. Writes the distance to the log once a " +
              "second plus every arrive/leave, so the numbers can be read from the log file " +
@@ -63,6 +73,7 @@ public class HomeGate : MonoBehaviour
 
     private TaskSequencer _sequencer;
     private bool _wasAtHome = false;
+    private float _atHomeSince = -1f;
     private float _nextComplaint = 0f;
     private float _nextLog = 0f;
     private int _transitions = 0;
@@ -77,7 +88,26 @@ public class HomeGate : MonoBehaviour
             Debug.LogError("HomeGate: no TaskSequencer on this GameObject, so there is no home " +
                            "position to watch. Put HomeGate on the same object as ControlManager.");
             enabled = false;
+            return;
         }
+
+        // The departure threshold is radius + hysteresis, and reaction time is marked at the
+        // moment the hand crosses it. So a large margin does not merely steady the flag, it
+        // moves the RT mark outward: at 5 cm + 7 cm the hand is already 12 cm away before the
+        // clock stops, which is a reach in progress rather than a reaction. The margin only
+        // has to outlast tracking jitter.
+        if (exitHysteresis > homeRadius * 0.5f)
+        {
+            Debug.LogWarning($"HomeGate: exit hysteresis ({exitHysteresis * 100f:F1} cm) is large "
+                           + $"next to the home radius ({homeRadius * 100f:F1} cm), so the hand has to "
+                           + $"reach {(homeRadius + exitHysteresis) * 100f:F1} cm from the marker before "
+                           + "it counts as having left - and reaction time is timed to that crossing, so "
+                           + "part of the reach is counted as reaction time. About a quarter of the "
+                           + "radius is enough to outlast jitter.");
+        }
+
+        Debug.Log($"HomeGate ready: at home within {homeRadius * 100f:F1} cm, counts as left at "
+                + $"{(homeRadius + exitHysteresis) * 100f:F1} cm.");
     }
 
     void Update()
@@ -101,6 +131,7 @@ public class HomeGate : MonoBehaviour
             }
             atHome = false;
             _wasAtHome = false;
+            _atHomeSince = -1f;
             return;
         }
 
@@ -113,6 +144,7 @@ public class HomeGate : MonoBehaviour
         if (nowAtHome && !_wasAtHome)
         {
             LastArrivedHomeTime = Time.time;
+            _atHomeSince = Time.time;
             _transitions++;
             OnArrivedHome?.Invoke();
             if (logCalibration)
@@ -121,6 +153,7 @@ public class HomeGate : MonoBehaviour
         else if (!nowAtHome && _wasAtHome)
         {
             LastLeftHomeTime = Time.time;
+            _atHomeSince = -1f;
             _transitions++;
             OnLeftHome?.Invoke();
             if (logCalibration)
@@ -141,6 +174,7 @@ public class HomeGate : MonoBehaviour
             if (nowAtHome && d > _maxSeenWhileAtHome) _maxSeenWhileAtHome = d;
 
             Debug.Log($"HomeGate: {d * 100f:F1} cm  atHome={nowAtHome}  "
+                    + $"held {HeldSeconds:F2}s  "
                     + $"| closest seen {_minSeen * 100f:F1} cm  "
                     + $"| transitions so far {_transitions}  "
                     + $"| radius {homeRadius * 100f:F1} cm (+{exitHysteresis * 100f:F1} to leave)");

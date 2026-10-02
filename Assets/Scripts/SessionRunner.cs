@@ -215,6 +215,7 @@ public class SessionRunner : MonoBehaviour
                   $"{totalTrials - familiarizationTrials} acquisition = {totalTrials} trials, " +
                   $"{(random ? "RANDOM" : "BLOCKED " + blockedTaskOrder)}.");
 
+        AssignForeperiods();
         ExportPlan(random ? "Random" : "Blocked (" + blockedTaskOrder + ")", random);
         PrepareCurrentTrial();
     }
@@ -358,6 +359,7 @@ public class SessionRunner : MonoBehaviour
                 + $"{transferTrials} {firstLabel} + {transferTrials} {secondLabel} = {totalTrials} trials. "
                 + "Block column records which retention half each trial belongs to.");
 
+        AssignForeperiods();
         ExportPlan($"Visit 2 - retention in both orders ({(blockedFirst ? "blocked first" : "random first")}), "
                  + $"then transfer ({firstLabel} first)", true);
         PrepareCurrentTrial();
@@ -398,9 +400,15 @@ public class SessionRunner : MonoBehaviour
             var parts = new System.Collections.Generic.List<string>();
             foreach (var kv in perBlock) parts.Add($"{kv.Value} {kv.Key.ToLower()}");
             s.AppendLine($"Total       : {string.Join(" + ", parts)} = {totalTrials} trials");
+
+            // Where home was, written down. Every reach distance in the session is measured from
+            // it, and a start point that exists only in an Inspector field cannot be checked
+            // against the data afterwards - or reproduced for this participant's next visit.
+            if (_taskSequencer != null) s.AppendLine($"Home        : {_taskSequencer.HomeDescription()}");
+            s.AppendLine($"Foreperiods : {ForeperiodSummary()}");
             s.AppendLine();
-            s.AppendLine("Trial  Block            Task    Say");
-            s.AppendLine("-----  ---------------  ------  --------------");
+            s.AppendLine("Trial  Block            Task    Fore  Say");
+            s.AppendLine("-----  ---------------  ------  ----  --------------");
 
             // A blank line at each point where the experimenter switches to a new sequence
             // for a RUN of trials, so the switch points stand out on paper.
@@ -417,7 +425,8 @@ public class SessionRunner : MonoBehaviour
                                       RunLengthAt(i) >= MinRunToCountAsBlock;
                     if (blockChanged || newTaskRun) s.AppendLine();
                 }
-                s.AppendLine($"{i + 1,5}  {_blockOf[i],-15}  {_order[i],-6}  {SequenceFor(_order[i])}");
+                string fore = (i < _foreperiodOf.Count) ? $"{_foreperiodOf[i]:F0}s" : "?";
+                s.AppendLine($"{i + 1,5}  {_blockOf[i],-15}  {_order[i],-6}  {fore,-4}  {SequenceFor(_order[i])}");
             }
 
             System.IO.File.WriteAllText(path, s.ToString());
@@ -427,6 +436,131 @@ public class SessionRunner : MonoBehaviour
         {
             Debug.LogWarning($"SessionRunner: could not write the session plan - {e.Message}");
         }
+    }
+
+    // One foreperiod per trial, decided when the session is planned.
+    private readonly List<float> _foreperiodOf = new List<float>();
+
+    // Gives every (block, task) group an equal number of each foreperiod, then shuffles within
+    // the group.
+    //
+    // WHY NOT DRAW ONE PER TRIAL:
+    //
+    // foreperiodSeconds[Random.Range(...)] at the start of each trial is an independent draw, and
+    // independent draws are not a balanced design - they are a design that is balanced on
+    // average, across participants you have not run yet. The 1 October session came out 21 x 5 s,
+    // 17 x 1 s and 16 x 3 s across its 54 acquisition trials, and Task A alone drew nine of the
+    // 5 s foreperiods against four of the 3 s. Foreperiod has to be unpredictable TO THE
+    // PARTICIPANT, which shuffling delivers; it does not have to be unpredictable to the
+    // experiment, and letting it be costs real statistical power in a single-participant count
+    // this small.
+    //
+    // Grouping by block AND task is what keeps it usable per cell: a count that is balanced over
+    // the whole session can still be lopsided inside the one task you want to compare.
+    //
+    // Seeded from the participant's own seed, offset so the foreperiod order is not a copy of the
+    // task order, and reproducible from allocation.csv alone if a file is ever lost.
+    private void AssignForeperiods()
+    {
+        _foreperiodOf.Clear();
+
+        float[] options = (foreperiodSeconds != null && foreperiodSeconds.Length > 0)
+                            ? foreperiodSeconds : new float[] { 2f };
+
+        for (int i = 0; i < _order.Count; i++) _foreperiodOf.Add(options[0]);
+
+        System.Random rng = randomSeed == 0 ? new System.Random()
+                                            : new System.Random(randomSeed + 7919);
+
+        // Which trial indices belong to each (block, task) group, in the order they appear.
+        var groups = new Dictionary<string, List<int>>();
+        var groupOrder = new List<string>();
+        for (int i = 0; i < _order.Count; i++)
+        {
+            string key = _blockOf[i] + "|" + _order[i];
+            if (!groups.TryGetValue(key, out List<int> members))
+            {
+                members = new List<int>();
+                groups[key] = members;
+                groupOrder.Add(key);
+            }
+            members.Add(i);
+        }
+
+        foreach (string key in groupOrder)
+        {
+            List<int> members = groups[key];
+
+            // Whole sets of the three lengths, as many as fit.
+            var pool = new List<float>();
+            while (pool.Count + options.Length <= members.Count)
+                foreach (float f in options) pool.Add(f);
+
+            // A group that does not divide evenly - familiarization is 6 trials over 3 tasks, so
+            // 2 trials per group - gets its remainder from a shuffled copy, so which lengths get
+            // the spare trials is not always the first ones in the array.
+            if (pool.Count < members.Count)
+            {
+                var spare = new List<float>(options);
+                for (int i = spare.Count - 1; i > 0; i--)
+                {
+                    int j = rng.Next(i + 1);
+                    (spare[i], spare[j]) = (spare[j], spare[i]);
+                }
+                int k = 0;
+                while (pool.Count < members.Count) pool.Add(spare[k++ % spare.Count]);
+            }
+
+            for (int i = pool.Count - 1; i > 0; i--)
+            {
+                int j = rng.Next(i + 1);
+                (pool[i], pool[j]) = (pool[j], pool[i]);
+            }
+
+            for (int i = 0; i < members.Count; i++) _foreperiodOf[members[i]] = pool[i];
+        }
+
+        // Say what came out, so an imbalance is visible in the log rather than discovered in the
+        // data afterwards.
+        var counts = new Dictionary<float, int>();
+        foreach (float f in _foreperiodOf) { counts.TryGetValue(f, out int c); counts[f] = c + 1; }
+        var parts = new List<string>();
+        foreach (float f in options) { counts.TryGetValue(f, out int c); parts.Add($"{c} x {f:F0}s"); }
+        Debug.Log($"Foreperiods assigned, balanced within each block and task: {string.Join(", ", parts)} "
+                + $"over {_foreperiodOf.Count} trials. Written into the plan file, one per trial.");
+    }
+
+    // The planned foreperiod for a trial. Falls back to a draw only if the plan is missing or the
+    // wrong length, which would mean the plan and the running session had come apart.
+    private float ForeperiodForTrial(int index)
+    {
+        if (_foreperiodOf.Count == _order.Count && index >= 0 && index < _foreperiodOf.Count)
+            return _foreperiodOf[index];
+
+        float[] options = (foreperiodSeconds != null && foreperiodSeconds.Length > 0)
+                            ? foreperiodSeconds : new float[] { 2f };
+        Debug.LogWarning($"SessionRunner: no planned foreperiod for trial {index + 1} "
+                       + $"({_foreperiodOf.Count} planned, {_order.Count} trials), so one was drawn at "
+                       + "random. The session's foreperiods are no longer balanced - note it, and "
+                       + "check the plan file against the data.");
+        return options[Random.Range(0, options.Length)];
+    }
+
+    // The foreperiod counts, for the plan file header. Lets the experimenter see at a glance
+    // that the three lengths came out even before the session runs, rather than counting rows.
+    private string ForeperiodSummary()
+    {
+        if (_foreperiodOf.Count == 0) return "not assigned";
+
+        var counts = new Dictionary<float, int>();
+        foreach (float f in _foreperiodOf) { counts.TryGetValue(f, out int c); counts[f] = c + 1; }
+
+        var keys = new List<float>(counts.Keys);
+        keys.Sort();
+
+        var parts = new List<string>();
+        foreach (float f in keys) parts.Add($"{counts[f]} x {f:F0}s");
+        return string.Join(", ", parts) + " (balanced within each block and task)";
     }
 
     // How many trials in a row share this trial's task, starting at index i.
@@ -518,6 +652,34 @@ public class SessionRunner : MonoBehaviour
              "and reaction time is where Shea & Morgan's effect was largest.")]
     public float[] foreperiodSeconds = { 1f, 3f, 5f };
 
+    [Tooltip("How long the hand must stay CONTINUOUSLY at the home marker before the foreperiod "
+           + "begins, in seconds.\n\n"
+           + "Zero reproduces the behaviour that lost every reaction time in the 1 October "
+           + "session: the gate opened on the first frame the fingertip was inside the radius - "
+           + "a hand still moving - so the foreperiod began mid-reach and the hand carried on "
+           + "through the marker. Requiring the hand to still be there a few hundred "
+           + "milliseconds later is what distinguishes a hand that has arrived from one that has "
+           + "settled. 0.4 s is long enough to exclude a pass-through and short enough not to "
+           + "lengthen the session noticeably.")]
+    public float homeDwellSeconds = 0.4f;
+
+    [Tooltip("ON: if the hand comes off the marker DURING the foreperiod, the foreperiod is "
+           + "abandoned and the trial waits for the hand to settle again, then runs a fresh "
+           + "foreperiod of the same length. OFF: the cue fires anyway and the trial is recorded "
+           + "as a false start.\n\n"
+           + "Restarting is what turns a lost trial into a usable one. A false start cannot be "
+           + "corrected afterwards - the reach did not begin from home, so neither its distance "
+           + "nor its reaction time means anything - whereas waiting a few more seconds costs "
+           + "only time. The variable foreperiod survives because the length was drawn when the "
+           + "session was planned, not at the restart, so the participant cannot learn anything "
+           + "from being made to wait again.")]
+    public bool restartForeperiodIfHomeLost = true;
+
+    [Tooltip("How many times a single trial may restart its foreperiod before the cue fires "
+           + "anyway and the trial is recorded as a false start. Stops a trial looping forever "
+           + "when hand tracking is failing rather than the participant fidgeting.")]
+    public int maxForeperiodRestarts = 3;
+
     [Header("Trial start - status (read-only)")]
     [Tooltip("True if the hand was confirmed at home when this trial's cue fired.")]
     public bool lastTrialHomeVerified = false;
@@ -533,6 +695,15 @@ public class SessionRunner : MonoBehaviour
              "before the cue fired - a false start. The trial still ran, and its reaction time " +
              "cannot be measured.")]
     public bool lastTrialFalseStart = false;
+    [Tooltip("How long the hand had been continuously at home when this trial's foreperiod "
+           + "began, in seconds. -1 if it was never confirmed. Recorded so a session where the "
+           + "dwell requirement is only just being met is visible in the data rather than only "
+           + "in the log.")]
+    public float lastTrialHomeHoldSeconds = -1f;
+    [Tooltip("How many times this trial's foreperiod had to be restarted because the hand came "
+           + "off the marker. A trial with several restarts is still a valid trial, but a "
+           + "participant or a session full of them is a procedural problem worth seeing.")]
+    public int lastTrialForeperiodRestarts = 0;
 
     private HomeGate _homeGate;
     private HomeAudioGuide _homeAudio;
@@ -540,6 +711,7 @@ public class SessionRunner : MonoBehaviour
     private Coroutine _rtRoutine;
     private bool _trialRunning;
     private bool _numberingWarned;
+    private bool _measuredHomeWarned;
 
     // Called by the experimenter's start-trial button.
     public void StartNextTrial()
@@ -589,6 +761,8 @@ public class SessionRunner : MonoBehaviour
         lastTrialHomeVerified = false;
         lastTrialFalseStart = false;
         lastReactionTime = -1f;
+        lastTrialHomeHoldSeconds = -1f;
+        lastTrialForeperiodRestarts = 0;
 
         // Whether the hand was at home when ARMING finished. This is not the same thing as
         // whether it was there when the cue fired, and conflating the two is what made the
@@ -616,6 +790,21 @@ public class SessionRunner : MonoBehaviour
             _taskSequencer.CalibrateGrid();
         }
 
+        // Measuring home is opt-in by a button press, and a button nobody pressed leaves the
+        // marker at a position computed from grid offsets - which is exactly the configuration
+        // that produced a session with no reaction times. Said once per session, not per trial.
+        if (_taskSequencer != null && _taskSequencer.useMeasuredHome
+            && !_taskSequencer.HasMeasuredHome && !_measuredHomeWarned)
+        {
+            _measuredHomeWarned = true;
+            Debug.LogWarning("SessionRunner: home has NOT been measured for this participant, so the "
+                           + $"marker is at its computed position ({_taskSequencer.HomeDescription()}). "
+                           + "If the hand cannot rest there comfortably it will not be held through the "
+                           + "foreperiod, and no trial will yield a reaction time. Press Measure home "
+                           + "(M, or both grips + B) with the participant's hand at rest, then start "
+                           + "the session.");
+        }
+
         // ---- wait for the hand at home ----
         //
         // This is a GATE, not a timeout. The targets do not appear until the hand is confirmed
@@ -632,49 +821,116 @@ public class SessionRunner : MonoBehaviour
         // An unsatisfiable wait is not a hang: clear-targets (Y) calls AbandonCurrentTrial(),
         // which stops this coroutine. The periodic warning says so, and HomeGate.Describe()
         // distinguishes "away (34.2 cm)" from "hand not tracked".
+        // The foreperiod length is read from the plan, not drawn here. Drawing it per trial made
+        // the three lengths come out 21/17/16 across the 54 acquisition trials of 1 October, and
+        // 9/5/4 within Task A alone - independent draws, not a balanced set. See
+        // AssignForeperiods().
+        float fp = ForeperiodForTrial(trialIndex);
+        lastForeperiod = fp;
+
         if (requireHandAtHome && _homeGate != null)
         {
             if (_homeAudio == null) _homeAudio = GetComponent<HomeAudioGuide>();
-            if (_homeAudio != null) _homeAudio.Begin();
 
-            float waitStarted = Time.time;
-            float warnEvery = Mathf.Max(2f, homeWaitWarnEverySeconds);
-            float nextWarning = waitStarted + warnEvery;
+            float dwellNeeded = Mathf.Max(0f, homeDwellSeconds);
+            int restarts = 0;
 
-            while (!_homeGate.atHome)
+            // Wait for the hand to SETTLE, run the foreperiod watching home throughout, and if
+            // the hand comes off before the cue, do both again.
+            //
+            // The two halves have to be one loop. Separately, the wait can only report where the
+            // hand was when the foreperiod began, and a foreperiod is one to five seconds long -
+            // which is how 60 consecutive trials were recorded with the hand confirmed at arming
+            // and 20-27 cm away by the time the cue fired.
+            while (true)
             {
-                if (Time.time >= nextWarning)
+                // ---- wait for arrival, then for the hand to stay ----
+                if (_homeAudio != null) _homeAudio.Begin();
+
+                float waitStarted = Time.time;
+                float warnEvery = Mathf.Max(2f, homeWaitWarnEverySeconds);
+                float nextWarning = waitStarted + warnEvery;
+
+                // Both conditions, not just the dwell. With homeDwellSeconds at 0 the dwell test
+                // alone is 0 < 0, which is false on the first frame - so the gate would open with
+                // the hand anywhere, and setting the dwell to zero would quietly disable the one
+                // guarantee this whole component exists to provide.
+                while (!(_homeGate.atHome && _homeGate.HeldSeconds >= dwellNeeded))
                 {
-                    nextWarning = Time.time + warnEvery;
-                    Debug.LogWarning($"Trial {trialIndex + 1}: STILL WAITING for the hand at home "
-                                   + $"after {Time.time - waitStarted:F0}s ({_homeGate.Describe()}). "
-                                   + "Tell the participant to rest their hand on the marker. If "
-                                   + "something is wrong, press clear-targets (Y) to abandon this "
-                                   + "trial.");
+                    // Amber while the hand is inside the radius but has not held long enough,
+                    // neutral while it is away. The participant can see the difference between
+                    // touching the marker and holding it, which is the thing they were never
+                    // told and could not have known.
+                    if (_taskSequencer != null)
+                        _taskSequencer.SetHomeMarkerState(_homeGate.atHome
+                            ? TaskSequencer.HomeMarkerState.HandInside
+                            : TaskSequencer.HomeMarkerState.Neutral);
+
+                    if (Time.time >= nextWarning)
+                    {
+                        nextWarning = Time.time + warnEvery;
+                        Debug.LogWarning($"Trial {trialIndex + 1}: STILL WAITING for the hand to settle "
+                                       + $"at home after {Time.time - waitStarted:F0}s "
+                                       + $"({_homeGate.Describe()}, held {_homeGate.HeldSeconds:F2}s of "
+                                       + $"{dwellNeeded:F2}s needed). Tell the participant to REST the "
+                                       + "hand on the marker and keep it there until the balls appear. "
+                                       + "If something is wrong, press clear-targets (Y) to abandon "
+                                       + "this trial.");
+                    }
+                    yield return null;
                 }
-                yield return null;
+
+                if (_homeAudio != null) _homeAudio.End();
+                if (_taskSequencer != null)
+                    _taskSequencer.SetHomeMarkerState(TaskSequencer.HomeMarkerState.Held);
+
+                homeAtArm = true;
+                lastTrialHomeHoldSeconds = _homeGate.HeldSeconds;
+
+                // ---- warning tone, then the foreperiod, with home watched every frame ----
+                if (_cues != null) _cues.Warning();
+
+                float foreperiodEnds = Time.time + fp;
+                bool homeLost = false;
+                while (Time.time < foreperiodEnds)
+                {
+                    if (!_homeGate.atHome) { homeLost = true; break; }
+                    yield return null;
+                }
+
+                if (!homeLost) break;      // held all the way to the cue - this trial is clean
+
+                // ---- the hand came off before the go signal ----
+                restarts++;
+                lastTrialForeperiodRestarts = restarts;
+                string why = _homeGate.handTracked ? "the hand left the marker"
+                                                   : "hand tracking dropped out";
+
+                if (!restartForeperiodIfHomeLost || restarts > Mathf.Max(0, maxForeperiodRestarts))
+                {
+                    Debug.LogWarning($"Trial {trialIndex + 1}: {why} during the foreperiod and the "
+                                   + $"trial has already restarted {restarts - 1} time(s) - firing the "
+                                   + "cue anyway. This trial will be recorded as a FALSE START, so its "
+                                   + "reach distance and reaction time are not usable. If this keeps "
+                                   + "happening, the marker is probably somewhere the hand cannot rest: "
+                                   + "press Measure home with the participant's hand at rest.");
+                    break;
+                }
+
+                Debug.LogWarning($"Trial {trialIndex + 1}: foreperiod ABANDONED after "
+                               + $"{fp - (foreperiodEnds - Time.time):F2}s of {fp:F0}s - {why}. Waiting "
+                               + $"for the hand to settle again, then a fresh {fp:F0}s foreperiod "
+                               + $"(restart {restarts} of {Mathf.Max(0, maxForeperiodRestarts)}). No cue "
+                               + "has fired, so nothing is lost but time.");
             }
-
-            if (_homeAudio != null) _homeAudio.End();
-
-            // The loop can only exit with the hand AT home, so this is now always true. That
-            // makes lastTrialFalseStart below mean exactly one thing: the hand was on the marker
-            // when the foreperiod began but had left it before the cue fired.
-            homeAtArm = true;
         }
-        else if (_homeGate != null)
+        else
         {
-            homeAtArm = _homeGate.atHome;   // not gating, but still recording
+            if (_homeGate != null) homeAtArm = _homeGate.atHome;   // not gating, but still recording
+
+            if (_cues != null) _cues.Warning();
+            yield return new WaitForSeconds(fp);
         }
-
-        // ---- warning, then a variable foreperiod ----
-        if (_cues != null) _cues.Warning();
-
-        float fp = (foreperiodSeconds != null && foreperiodSeconds.Length > 0)
-                     ? foreperiodSeconds[Random.Range(0, foreperiodSeconds.Length)]
-                     : 2f;
-        lastForeperiod = fp;
-        yield return new WaitForSeconds(fp);
 
         // ---- cue onset = go ----
         //
@@ -707,6 +963,9 @@ public class SessionRunner : MonoBehaviour
                            + "when the foreperiod began but had left it before the cue. The reach did "
                            + "not start from home, so its distance is not the intended one.");
         }
+        // Neutral from this instant. A marker that keeps saying where the hand is would hand
+        // back exactly the information the hidden-hand condition removes.
+        if (_taskSequencer != null) _taskSequencer.SetHomeMarkerState(TaskSequencer.HomeMarkerState.Neutral);
         if (_taskSequencer != null) _taskSequencer.StartTrial();
         if (_cues != null) _cues.Go();
         waitingToStartTrial = false;
@@ -829,6 +1088,11 @@ public class SessionRunner : MonoBehaviour
         // the End() call it was heading for never runs. Abandoning a trial has to silence it.
         if (_homeAudio == null) _homeAudio = GetComponent<HomeAudioGuide>();
         if (_homeAudio != null) _homeAudio.End();
+
+        // Same reason: stopping mid-wait leaves the marker stuck on amber or green, which would
+        // then be telling the next participant something about a trial that never ran.
+        if (_taskSequencer != null)
+            _taskSequencer.SetHomeMarkerState(TaskSequencer.HomeMarkerState.Neutral);
 
         _trialRunning = false;
         waitingToStartTrial = true;

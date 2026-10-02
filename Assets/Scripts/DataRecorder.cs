@@ -29,6 +29,10 @@ public class DataRecorder : MonoBehaviour
     public int trialsCompleted = 0;
     [Tooltip("Grasps that landed on a target other than the one the sequence called for.")]
     public int orderErrors = 0;
+    [Tooltip("Grasps the participant made that the app DECLINED to count - a pass-through under "
+           + "the minimum gap, or a select event on a target that was not the closest. Each one "
+           + "is written to the CSV as its own row, with grasp_outcome saying which it was.")]
+    public int ignoredGrasps = 0;
     public string currentFilePath = "";
 
     // Found automatically - no Inspector wiring needed.
@@ -53,7 +57,27 @@ public class DataRecorder : MonoBehaviour
         "target_x,target_y,target_z,fingertip_x,fingertip_y,fingertip_z," +
         "hand_used,hands_visible,simulated,grid_width_m,grid_height_m,grid_distance_m," +
         "expected_position_number,order_correct,home_verified,false_start,foreperiod_s,reaction_time_s," +
-        "reach_time_s";
+        "reach_time_s," +
+
+        // Appended rather than slotted in next to the columns they belong with, on purpose:
+        // inserting a column shifts every one after it, and anything already written against
+        // the old layout - a script, a half-finished analysis - then reads the wrong field
+        // without failing. Appending cannot break a reader that does not know about them.
+        //
+        // grasp_outcome        'recorded' for a counted grasp. Otherwise a grasp the
+        //                      participant made and the app declined: 'passthrough_under_min_gap'
+        //                      (too soon after the previous one to be a real reach) or
+        //                      'not_closest_target'. Filter to grasp_outcome == 'recorded' for
+        //                      any analysis of performance; count the others to report how often
+        //                      the app intervened. Declined rows do not consume a grasp, so
+        //                      grasp_in_trial on them is the grasp they were ATTEMPTING.
+        // home_hold_s          how long the hand had been continuously on the marker when the
+        //                      foreperiod began. A session where this sits near the required
+        //                      dwell is one where the gate is only just being satisfied.
+        // foreperiod_restarts  how many times the foreperiod restarted because the hand came off
+        //                      the marker. A trial with restarts is valid; many of them is a
+        //                      procedural problem, and one invisible in the data until now.
+        "grasp_outcome,home_hold_s,foreperiod_restarts";
 
     void Start()
     {
@@ -69,6 +93,8 @@ public class DataRecorder : MonoBehaviour
             ControlManager.Singleton.OnTargetCapturedDetailed += HandleCapture;
             ControlManager.Singleton.OnTargetSpawned -= HandleSpawn;
             ControlManager.Singleton.OnTargetSpawned += HandleSpawn;
+            ControlManager.Singleton.OnGraspIgnored -= HandleIgnoredGrasp;
+            ControlManager.Singleton.OnGraspIgnored += HandleIgnoredGrasp;
         }
         else
         {
@@ -84,6 +110,7 @@ public class DataRecorder : MonoBehaviour
         {
             ControlManager.Singleton.OnTargetCapturedDetailed -= HandleCapture;
             ControlManager.Singleton.OnTargetSpawned -= HandleSpawn;
+            ControlManager.Singleton.OnGraspIgnored -= HandleIgnoredGrasp;
         }
         CloseFile();
     }
@@ -155,7 +182,7 @@ public class DataRecorder : MonoBehaviour
         // practice-schedule effect, and swapping two targets breaks that: Task B done as
         // 2-4-9 instead of 2-9-4 is 85.87 cm, 15% short. A trial like that is not a harder or
         // easier version of Task B, it is a different task, and it has to be excluded.
-        int expected = ExpectedPositionForThisGrasp();
+        int expected = ExpectedPositionForThisGrasp(_graspInTrial);
         string orderCorrect = "";
         if (expected > 0 && d.targetIndex > 0)
         {
@@ -170,7 +197,8 @@ public class DataRecorder : MonoBehaviour
             }
         }
 
-        WriteRow(d, sinceSpawn, sinceFirstGrasp, expected, orderCorrect, reachTime);
+        WriteRow(d, true, _graspInTrial, sinceSpawn, sinceFirstGrasp, expected, orderCorrect,
+                 reachTime, "recorded");
 
         // CapturesRequired(), not capturesPerTrial.
         //
@@ -201,8 +229,51 @@ public class DataRecorder : MonoBehaviour
         }
     }
 
-    private void WriteRow(ControlManager.CaptureData d, string sinceSpawn, string sinceFirstGrasp,
-                          int expected, string orderCorrect, string reachTime)
+    // A grasp the participant made that the app declined to count.
+    //
+    // Declining is the right call - a pass-through consumes a target the sequence still needs,
+    // and a stray select event on a target the hand was not reaching for is not a grasp. But
+    // until now a declined grasp existed only as a console warning, which means it was not in
+    // the data at all: an analysis would report a clean trial where the participant had in fact
+    // touched a target and been refused. In a study whose dependent variables include error
+    // rate, the grasps the participant made are the behaviour, and whether the app counted them
+    // is a separate fact that belongs in its own column.
+    //
+    // These rows do NOT advance grasp_in_trial and do not complete a trial. They are
+    // deliberately easy to drop: filter grasp_outcome == 'recorded'.
+    private void HandleIgnoredGrasp(int positionNumber, string reason)
+    {
+        if (_experimenterMode != null && !_experimenterMode.IsExperimentStarted()) return;
+
+        // No trial underway means this is not part of a trial - targets left on screen between
+        // trials, say. Starting one here would invent a trial out of a rejected grasp.
+        if (!_trialInProgress) return;
+
+        ignoredGrasps++;
+
+        int attempting = _graspInTrial + 1;
+        int expected = ExpectedPositionForThisGrasp(attempting);
+        string orderCorrect = "";
+        if (expected > 0 && positionNumber > 0)
+            orderCorrect = positionNumber == expected ? "TRUE" : "FALSE";
+
+        string sinceSpawn = _trialSpawnTime >= 0f
+            ? (Time.time - _trialSpawnTime).ToString("F4", CultureInfo.InvariantCulture) : "";
+        string sinceFirstGrasp = _firstGraspTime >= 0f
+            ? (Time.time - _firstGraspTime).ToString("F4", CultureInfo.InvariantCulture) : "";
+
+        // Position number only. There is no CaptureData for a grasp that was never registered,
+        // so there is no fingertip position and no endpoint error - and writing a zero would be
+        // a measurement that never happened.
+        var d = new ControlManager.CaptureData { targetIndex = positionNumber };
+
+        WriteRow(d, false, attempting, sinceSpawn, sinceFirstGrasp, expected, orderCorrect,
+                 "", reason);
+    }
+
+    private void WriteRow(ControlManager.CaptureData d, bool haveGeometry, int graspNumber,
+                          string sinceSpawn, string sinceFirstGrasp,
+                          int expected, string orderCorrect, string reachTime, string outcome)
     {
         if (_writer == null && !OpenFile()) return;
 
@@ -237,14 +308,22 @@ public class DataRecorder : MonoBehaviour
             condition,
             task,
             _trialNumber.ToString(CultureInfo.InvariantCulture),
-            _graspInTrial.ToString(CultureInfo.InvariantCulture),
+            graspNumber.ToString(CultureInfo.InvariantCulture),
             d.targetIndex > 0 ? d.targetIndex.ToString(CultureInfo.InvariantCulture) : "",
             sinceSpawn,
             sinceFirstGrasp,
-            d.endpointErrorMeters.ToString("F5", CultureInfo.InvariantCulture),
-            F(d.targetPosition.x), F(d.targetPosition.y), F(d.targetPosition.z),
-            F(d.fingerTipPosition.x), F(d.fingerTipPosition.y), F(d.fingerTipPosition.z),
-            d.usedLeftHand ? "Left" : "Right",
+
+            // Blank, not zero, when there is no measurement. A declined grasp was never
+            // registered, so it has no fingertip position and no endpoint error; a zero there
+            // would read as a perfect grasp.
+            haveGeometry ? d.endpointErrorMeters.ToString("F5", CultureInfo.InvariantCulture) : "",
+            haveGeometry ? F(d.targetPosition.x) : "",
+            haveGeometry ? F(d.targetPosition.y) : "",
+            haveGeometry ? F(d.targetPosition.z) : "",
+            haveGeometry ? F(d.fingerTipPosition.x) : "",
+            haveGeometry ? F(d.fingerTipPosition.y) : "",
+            haveGeometry ? F(d.fingerTipPosition.z) : "",
+            haveGeometry ? (d.usedLeftHand ? "Left" : "Right") : "",
             handsVisible,
             d.isSimulated ? "TRUE" : "FALSE",
             _taskSequencer != null ? F(_taskSequencer.gridWidth) : "",
@@ -280,22 +359,30 @@ public class DataRecorder : MonoBehaviour
             startFactsMatch ? (_sessionRunner.lastTrialFalseStart ? "TRUE" : "FALSE") : "",
             startFactsMatch ? Secs(_sessionRunner.lastForeperiod) : "",
             startFactsMatch ? Secs(_sessionRunner.lastReactionTime) : "",
-            reachTime
+            reachTime,
+
+            outcome,
+            startFactsMatch ? Secs(_sessionRunner.lastTrialHomeHoldSeconds) : "",
+            startFactsMatch ? _sessionRunner.lastTrialForeperiodRestarts
+                                  .ToString(CultureInfo.InvariantCulture) : ""
         });
 
         _writer.WriteLine(row);   // AutoFlush is on, so this reaches disk straight away
         rowsWritten++;
     }
 
-    // The position number the current task's sequence calls for at this point in the trial,
-    // or 0 if it cannot be determined. _graspInTrial has already been incremented when this
-    // is called, so grasp 1 looks at element 0.
-    private int ExpectedPositionForThisGrasp()
+    // The position number the current task's sequence calls for at a given point in the trial,
+    // or 0 if it cannot be determined. graspNumber is 1-based, so grasp 1 looks at element 0.
+    //
+    // Takes the number as an argument rather than reading _graspInTrial, because a declined
+    // grasp has to ask about the grasp it was ATTEMPTING - which is one past the last counted
+    // one, and _graspInTrial has not moved.
+    private int ExpectedPositionForThisGrasp(int graspNumber)
     {
         if (_taskSequencer == null) return 0;
         var seq = _taskSequencer.CurrentSequencePositions();
         if (seq == null) return 0;
-        int i = _graspInTrial - 1;
+        int i = graspNumber - 1;
         return (i >= 0 && i < seq.Count) ? seq[i] : 0;
     }
 
@@ -372,7 +459,8 @@ public class DataRecorder : MonoBehaviour
             string who = string.IsNullOrWhiteSpace(participantId) ? "NO ID SET" : participantId;
             GUI.Label(new Rect(10, 215, 600, 25),
                       $"Recording: {who} / {visitLabel}  -  {rowsWritten} rows, {trialsCompleted} trials saved"
-                      + (orderErrors > 0 ? $"  -  {orderErrors} ORDER ERRORS" : ""));
+                      + (orderErrors > 0 ? $"  -  {orderErrors} ORDER ERRORS" : "")
+                      + (ignoredGrasps > 0 ? $"  -  {ignoredGrasps} declined grasps" : ""));
             if (!string.IsNullOrEmpty(currentFilePath))
             {
                 GUI.Label(new Rect(10, 238, 900, 25), $"File: {currentFilePath}");

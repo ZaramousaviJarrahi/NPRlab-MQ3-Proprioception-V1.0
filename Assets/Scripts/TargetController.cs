@@ -117,8 +117,9 @@ public class TargetController : MonoBehaviour
             float ago = _lastClosestTime > 0f ? Time.time - _lastClosestTime : -1f;
             Debug.LogWarning($"Target at position {index + 1}: grasp IGNORED - it was not the "
                            + $"closest target (last closest {(ago < 0f ? "never" : ago.ToString("F2") + "s ago")}). "
-                           + "Nothing was recorded for this grasp. If this happens repeatedly, raise "
-                           + "Closest Grace Seconds on the Target prefab.");
+                           + "If this happens repeatedly, raise Closest Grace Seconds on the Target "
+                           + "prefab.");
+            ControlManager.Singleton.ReportIgnoredGrasp(index + 1, "not_closest_target");
             return;
         }
 

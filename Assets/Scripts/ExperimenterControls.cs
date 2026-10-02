@@ -122,7 +122,10 @@ public class ExperimenterControls : MonoBehaviour
             {
                 if (bothGrips) RecentreGrid(); else StartTrial();
             }
-            if (OVRInput.GetDown(OVRInput.Button.Two, OVRInput.Controller.RTouch)) ToggleHands();   // B
+            if (OVRInput.GetDown(OVRInput.Button.Two, OVRInput.Controller.RTouch))       // B
+            {
+                if (bothGrips) MeasureHome(); else ToggleHands();
+            }
             if (OVRInput.GetDown(OVRInput.Button.One, OVRInput.Controller.LTouch)) StartSession();  // X
             if (OVRInput.GetDown(OVRInput.Button.Two, OVRInput.Controller.LTouch)) ClearTargets();  // Y
         }
@@ -144,6 +147,7 @@ public class ExperimenterControls : MonoBehaviour
             if (Input.GetKeyDown(KeyCode.T)) StartTrial();
             if (Input.GetKeyDown(KeyCode.H)) ToggleHands();
             if (Input.GetKeyDown(KeyCode.C)) ClearTargets();
+            if (Input.GetKeyDown(KeyCode.M)) MeasureHome();
         }
         catch (System.Exception)
         {
@@ -201,6 +205,29 @@ public class ExperimenterControls : MonoBehaviour
         if (_sessionRunner != null) _sessionRunner.AbandonCurrentTrial();
     }
 
+    // Puts the home marker where the participant's hand actually rests.
+    //
+    // Run this once per participant, during setup, BEFORE starting the session: seat them, ask
+    // them to let the reaching hand rest in the position they will return to between trials,
+    // and press it. Everything about the trial start depends on the marker being somewhere the
+    // hand will stay for up to five seconds - and a position guessed from grid offsets was what
+    // produced 60 consecutive trials with no reaction time on 1 October.
+    public void MeasureHome()
+    {
+        if (_taskSequencer == null) return;
+
+        bool started = _experimenterMode != null && _experimenterMode.IsExperimentStarted();
+        if (!_taskSequencer.CaptureHomeFromHand()) return;
+
+        if (started)
+        {
+            Debug.LogWarning("HOME RE-MEASURED mid-session. Every first reach of a trial is "
+                           + "measured from the home marker, so trials recorded before and after "
+                           + "this point started from different distances and are not directly "
+                           + "comparable. Note the trial number in your session log.");
+        }
+    }
+
     public void RecentreGrid()
     {
         if (_taskSequencer == null) return;
@@ -226,8 +253,9 @@ public class ExperimenterControls : MonoBehaviour
             if (GUI.Button(new Rect(x, y + 88f, w, h), "Toggle hands  (B)", btn)) ToggleHands();
             if (GUI.Button(new Rect(x, y + 132f, w, h), "Clear targets  (Y)", btn)) ClearTargets();
             if (GUI.Button(new Rect(x, y + 176f, w, h), "Re-centre grid", btn)) RecentreGrid();
+            if (GUI.Button(new Rect(x, y + 220f, w, h), "Measure home  (M)", btn)) MeasureHome();
 
-            GUI.Label(new Rect(x, y + 220f, w, 22f),
+            GUI.Label(new Rect(x, y + 264f, w, 22f),
                       _experimenterMode == null ? "NO ExperimenterMode!" :
                       (_experimenterMode.IsExperimentStarted() ? "session: RUNNING" : "session: not started"));
         }

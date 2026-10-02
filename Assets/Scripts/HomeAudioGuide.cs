@@ -193,8 +193,12 @@ public class HomeAudioGuide : MonoBehaviour
         if (_startedAt >= 0f && Time.time - _startedAt > maxGuidanceSeconds)
         {
             Debug.LogWarning($"HomeAudioGuide: stopped by its own {maxGuidanceSeconds:F0}s " +
-                             "failsafe. Begin() was called but End() was not — check the " +
-                             "SessionRunner wiring.");
+                             "failsafe, so the clicks have gone quiet. Two different things look " +
+                             "the same from here: either the wait for the hand at home has " +
+                             "genuinely run this long - and the participant has just lost the " +
+                             "audible cue to home, at the moment they most need it - or Begin() " +
+                             "was called without a matching End(). A 'STILL WAITING' line above " +
+                             "means the first; nothing above means the second.");
             End();
             return;
         }

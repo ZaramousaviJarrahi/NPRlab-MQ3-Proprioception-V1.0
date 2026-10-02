@@ -43,6 +43,21 @@ public class TaskSequencer : MonoBehaviour
     [Tooltip("Diameter of the home marker sphere, in metres.")]
     public float homeMarkerSize = 0.05f;
 
+    [Tooltip("ON = the home marker sits where the participant's resting hand was MEASURED to "
+           + "be (press Measure home with their hand at rest), and the two offsets above are "
+           + "ignored until the session ends. OFF = always the computed position above.\n\n"
+           + "Measuring is the reliable option, and it is not a convenience. The offsets place "
+           + "the marker at a guessed point, and a marker the hand cannot rest on comfortably "
+           + "will not be held through a one-to-five-second foreperiod - which is precisely "
+           + "what a reaction time depends on. Arm length, seat height and posture all differ "
+           + "between participants; a single pair of numbers cannot be right for all of them.")]
+    public bool useMeasuredHome = true;
+
+    [Tooltip("ON = the home marker changes colour and shrinks while the hand is inside the home "
+           + "radius, so the participant can see they are holding it. Reset to neutral at cue "
+           + "onset, so it never informs the reach itself.")]
+    public bool homeMarkerFeedback = true;
+
     [Header("Where the grid is anchored")]
     [Tooltip("Captured once from the participant's head position, so the grid sits in front of " +
              "wherever they are sitting - then stays put. No grabbing a cube to adjust it.")]
@@ -145,6 +160,93 @@ public class TaskSequencer : MonoBehaviour
     // reads HomePosition() every frame from the moment the app starts, so without this the
     // home gate can sit waiting for a hand to arrive at a point that is not in the room.
     public bool IsCalibrated => _calibrated;
+
+    private Vector3 _measuredHomeLocal;
+    private bool _haveMeasuredHome = false;
+
+    /// True once the home marker has been placed from a measured resting hand.
+    public bool HasMeasuredHome => _haveMeasuredHome;
+
+    /// Puts the home marker where the participant's hand actually is, and keeps it there.
+    ///
+    /// The experimenter asks the participant to rest their reaching hand comfortably - the
+    /// posture they will return to between every trial - and presses this. The fingertip
+    /// position is stored RELATIVE to the grid origin, so it travels with the calibrated frame
+    /// and stays put for the rest of the session.
+    ///
+    /// Why this exists: on 1 October the marker was 20 cm in front of the head at roughly the
+    /// height of the middle target row, which is mid-air. Every trial of that session recorded
+    /// the hand arriving, withdrawing within 200-400 ms, and resting 20-27 cm away for the
+    /// whole foreperiod. No gate threshold can fix a marker the hand will not stay on, and the
+    /// result was 60 trials with no reaction time at all.
+    public bool CaptureHomeFromHand()
+    {
+        if (ControlManager.Singleton == null)
+        {
+            Debug.LogError("TaskSequencer: no ControlManager, so the hand position cannot be read "
+                         + "and home cannot be measured.");
+            return false;
+        }
+
+        if (!_calibrated)
+        {
+            Debug.LogWarning("TaskSequencer: the grid was not calibrated, so there was no frame to "
+                           + "store the measured home position in. Calibrating from the CURRENT head "
+                           + "position first - the participant must be seated and facing forward.");
+            CalibrateGrid();
+        }
+
+        if (!ControlManager.Singleton.TryTrackedFingertip(out Vector3 tip, out bool usedLeft))
+        {
+            Debug.LogError("TaskSequencer: home NOT measured - neither hand is tracked. Check hand "
+                         + "tracking; a controller held in that hand switches it off. The marker is "
+                         + "still at its computed position.");
+            return false;
+        }
+
+        _measuredHomeLocal = Quaternion.Inverse(_gridRotation) * (tip - _gridOrigin);
+        _haveMeasuredHome = true;
+        UpdateHomeMarker();
+
+        Debug.Log($"Home MEASURED from the {(usedLeft ? "left" : "right")} hand: "
+                + $"{_measuredHomeLocal.z * 100f:F1} cm in front, "
+                + $"{_measuredHomeLocal.y * 100f:F1} cm vertically and "
+                + $"{_measuredHomeLocal.x * 100f:F1} cm sideways of the head, "
+                + $"{Vector3.Distance(HomePosition(), GridPosition(5)) * 100f:F1} cm from the centre "
+                + "target. Check that against the participant's reach before you start - this is the "
+                + "distance every first reach of the session will be.");
+        return true;
+    }
+
+    /// Back to the computed position - for when a measurement was taken by mistake.
+    public void ClearMeasuredHome()
+    {
+        _haveMeasuredHome = false;
+        UpdateHomeMarker();
+        Debug.Log("Home measurement cleared - the marker is back at its computed position. "
+                + $"{HomeDescription()}");
+    }
+
+    /// The home position as an offset from the participant's head, for logs and the plan file.
+    /// A start point that is not recorded cannot be checked afterwards, and every reach
+    /// distance in the session is measured from it.
+    public Vector3 HomeLocalOffset()
+    {
+        if (useMeasuredHome && _haveMeasuredHome) return _measuredHomeLocal;
+        return new Vector3(0f,
+                           -gridHeight / 2f - homeBelowBottomRow + gridHeightOffset,
+                           gridDistance - homeTowardParticipant);
+    }
+
+    /// One line saying where home is and how it got there.
+    public string HomeDescription()
+    {
+        Vector3 o = HomeLocalOffset();
+        string how = (useMeasuredHome && _haveMeasuredHome) ? "measured from the resting hand"
+                                                            : "computed from the grid offsets";
+        return $"home {how}: {o.z * 100f:F1} cm in front, {o.y * 100f:F1} cm vertically, "
+             + $"{o.x * 100f:F1} cm sideways of the head";
+    }
 
     // Captures where the participant is sitting, once. Everything after this is fixed.
     public void CalibrateGrid()
@@ -267,6 +369,9 @@ public class TaskSequencer : MonoBehaviour
     // from here, so moving it changes the geometry of the whole study.
     public Vector3 HomePosition()
     {
+        if (useMeasuredHome && _haveMeasuredHome)
+            return _gridOrigin + _gridRotation * _measuredHomeLocal;
+
         float y = -gridHeight / 2f - homeBelowBottomRow + gridHeightOffset;
         float z = gridDistance - homeTowardParticipant;
         return _gridOrigin + _gridRotation * new Vector3(0f, y, z);
@@ -295,7 +400,64 @@ public class TaskSequencer : MonoBehaviour
 
         _homeMarker.SetActive(true);
         _homeMarker.transform.position = HomePosition();
-        _homeMarker.transform.localScale = Vector3.one * homeMarkerSize;
+        _homeMarker.transform.localScale = Vector3.one * homeMarkerSize * _markerScale;
+    }
+
+    /// What the home marker is currently saying to the participant.
+    public enum HomeMarkerState
+    {
+        Neutral,     // between trials, and from cue onset onwards
+        HandInside,  // the hand is within the home radius but has not been there long enough
+        Held         // held long enough to satisfy the gate
+    }
+
+    private HomeMarkerState _markerState = HomeMarkerState.Neutral;
+    private float _markerScale = 1f;
+
+    /// Shows the participant whether they are holding home.
+    ///
+    /// Without this the only feedback is audible, and a participant who cannot see their hand
+    /// (Visit 3) or simply does not realise the marker has to be HELD gets no indication that
+    /// touching it and withdrawing is not enough. SessionRunner drives this during arming and
+    /// sets it back to Neutral at cue onset - a distance cue during the reach would hand back
+    /// exactly the information the hidden-hand condition removes.
+    public void SetHomeMarkerState(HomeMarkerState state)
+    {
+        if (!homeMarkerFeedback) state = HomeMarkerState.Neutral;
+        if (state == _markerState && _homeMarker != null) return;
+        _markerState = state;
+
+        switch (state)
+        {
+            case HomeMarkerState.HandInside:
+                TintHomeMarker(new Color(1f, 0.78f, 0.25f));   // amber: inside, keep still
+                _markerScale = 1f;
+                break;
+            case HomeMarkerState.Held:
+                TintHomeMarker(new Color(0.25f, 0.85f, 0.4f)); // green: the gate is satisfied
+                _markerScale = 0.8f;
+                break;
+            default:
+                TintHomeMarker(homeMarkerColour);
+                _markerScale = 1f;
+                break;
+        }
+
+        if (_homeMarker != null)
+            _homeMarker.transform.localScale = Vector3.one * homeMarkerSize * _markerScale;
+    }
+
+    // Colour is set through whichever property the material actually has: URP uses _BaseColor,
+    // the built-in pipeline _Color. Setting only one is how a tint silently does nothing.
+    // Scale changes alongside it so the state is still readable if neither property exists.
+    private void TintHomeMarker(Color c)
+    {
+        if (_homeMarker == null) return;
+        Renderer r = _homeMarker.GetComponent<Renderer>();
+        if (r == null || r.material == null) return;
+
+        if (r.material.HasProperty("_BaseColor")) r.material.SetColor("_BaseColor", c);
+        if (r.material.HasProperty("_Color"))     r.material.SetColor("_Color", c);
     }
 
     private bool _matchCheckDone = false;
