@@ -869,6 +869,18 @@ public class SessionRunner : MonoBehaviour
                     if (Time.time >= nextWarning)
                     {
                         nextWarning = Time.time + warnEvery;
+
+                        // Restart the guidance as well, and note that this only works because
+                        // warnEvery (10 s) is shorter than HomeAudioGuide's own failsafe (12 s).
+                        // The guide stops itself after maxGuidanceSeconds so an abandoned trial
+                        // cannot click forever - but a wait that legitimately runs longer than
+                        // that would then leave the participant with no audible cue to home at
+                        // the moment they most need one, and in Visit 3, with the hand hidden, no
+                        // cue of any kind. Confirmed from the 2 Oct editor log: guidance began at
+                        // 12:45:52 and went silent at 12:46:04 while the trial was still waiting.
+                        // Begin() only resets flags and its own timer, so calling it again is safe.
+                        if (_homeAudio != null) _homeAudio.Begin();
+
                         Debug.LogWarning($"Trial {trialIndex + 1}: STILL WAITING for the hand to settle "
                                        + $"at home after {Time.time - waitStarted:F0}s "
                                        + $"({_homeGate.Describe()}, held {_homeGate.HeldSeconds:F2}s of "
