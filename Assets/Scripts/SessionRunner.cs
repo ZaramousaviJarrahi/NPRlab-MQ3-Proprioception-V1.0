@@ -548,19 +548,50 @@ public class SessionRunner : MonoBehaviour
 
     // The foreperiod counts, for the plan file header. Lets the experimenter see at a glance
     // that the three lengths came out even before the session runs, rather than counting rows.
+    //
+    // Broken down BY BLOCK, because a single total is misleading here. Visit 1 acquisition is
+    // 54 trials and comes out exactly 18/18/18, but familiarization is 6 trials over 3 tasks -
+    // 2 trials per task, which cannot be level across 3 foreperiods by arithmetic. Added
+    // together those give 21/20/19, and a line reading 21/20/19 is precisely what someone
+    // checking that the balance works would read as the balance not working.
     private string ForeperiodSummary()
     {
         if (_foreperiodOf.Count == 0) return "not assigned";
 
-        var counts = new Dictionary<float, int>();
-        foreach (float f in _foreperiodOf) { counts.TryGetValue(f, out int c); counts[f] = c + 1; }
+        var lengths = new List<float>();
+        foreach (float f in _foreperiodOf) if (!lengths.Contains(f)) lengths.Add(f);
+        lengths.Sort();
 
-        var keys = new List<float>(counts.Keys);
-        keys.Sort();
+        var perBlock = new Dictionary<string, Dictionary<float, int>>();
+        var blockOrder = new List<string>();
+        for (int i = 0; i < _foreperiodOf.Count && i < _blockOf.Count; i++)
+        {
+            if (!perBlock.TryGetValue(_blockOf[i], out Dictionary<float, int> c))
+            {
+                c = new Dictionary<float, int>();
+                perBlock[_blockOf[i]] = c;
+                blockOrder.Add(_blockOf[i]);
+            }
+            c.TryGetValue(_foreperiodOf[i], out int n);
+            c[_foreperiodOf[i]] = n + 1;
+        }
 
-        var parts = new List<string>();
-        foreach (float f in keys) parts.Add($"{counts[f]} x {f:F0}s");
-        return string.Join(", ", parts) + " (balanced within each block and task)";
+        var blocks = new List<string>();
+        foreach (string b in blockOrder)
+        {
+            var parts = new List<string>();
+            foreach (float f in lengths)
+            {
+                perBlock[b].TryGetValue(f, out int n);
+                parts.Add($"{n} x {f:F0}s");
+            }
+            blocks.Add($"{b.ToLower()} {string.Join(", ", parts)}");
+        }
+
+        return string.Join("  |  ", blocks)
+             + "\n              (balanced within each block AND task. A block whose trial count is "
+             + "not a multiple of the number of foreperiods cannot come out level - familiarization "
+             + "is 2 trials per task over 3 lengths - so check the blocks that matter, not the total.)";
     }
 
     // How many trials in a row share this trial's task, starting at index i.
