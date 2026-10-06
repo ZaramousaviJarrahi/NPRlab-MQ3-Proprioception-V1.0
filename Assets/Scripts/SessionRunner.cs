@@ -928,7 +928,6 @@ public class SessionRunner : MonoBehaviour
                     _taskSequencer.SetHomeMarkerState(TaskSequencer.HomeMarkerState.Held);
 
                 homeAtArm = true;
-                lastTrialHomeHoldSeconds = _homeGate.HeldSeconds;
 
                 // ---- warning tone, then the foreperiod, with home watched every frame ----
                 if (_cues != null) _cues.Warning();
@@ -999,6 +998,18 @@ public class SessionRunner : MonoBehaviour
         // reach distance is only the intended one if the reach started from home, and reaction
         // time is only measurable if there is a departure from home still to come.
         lastTrialHomeVerified = _homeGate != null && _homeGate.atHome;
+
+        // home_hold_s belongs here too, not at gate release. Assigned where the gate opened it
+        // could only ever read back homeDwellSeconds plus one frame: the wait loop exits on the
+        // first frame HeldSeconds crosses the threshold. That is why 2 October logged
+        // 0.4012-0.4132 s on all 180 grasps against a 0.4 s dwell - a column that looks like a
+        // measurement of how settled the hand was, and was only ever the threshold.
+        //
+        // HeldSeconds keeps accumulating while the hand stays, and the foreperiod loop breaks the
+        // moment it leaves, so reading it HERE gives the real total: dwell plus foreperiod on a
+        // clean trial, and a short value when the hand never settled - which is the thing the
+        // column was for.
+        lastTrialHomeHoldSeconds = _homeGate != null ? _homeGate.HeldSeconds : 0f;
         lastTrialFalseStart = homeAtArm && !lastTrialHomeVerified;
         if (lastTrialFalseStart)
         {
