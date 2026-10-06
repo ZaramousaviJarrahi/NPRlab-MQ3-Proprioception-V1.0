@@ -21,6 +21,15 @@ WHY THIS IS NOT DONE IN THE GAME
   re-derived in seconds.
 
 NEW COLUMNS
+  depth_offset_m               the corrected error resolved ALONG the reach axis (home to
+                               target). Negative means the hand stopped short. This is a
+                               property of the interaction, not of the participant: the grab
+                               fires before the hand arrives and the ball then vanishes, so
+                               there is nothing left to reach for.
+  lateral_error_m              the same error ACROSS the reach axis. This is the aim, and it
+                               is the component to analyse as endpoint accuracy. Pooling the
+                               two into one distance buries a 3 cm systematic offset inside
+                               what looks like a measure of precision.
   endpoint_error_corrected_m   distance from the target centre to the fingertip at its
                                CLOSEST APPROACH, within --window seconds after the grab
                                registered. This is the endpoint-error measure to analyse.
@@ -193,7 +202,8 @@ def main():
         if key:
             by_trial[key].append(fr)
 
-    new_cols = ["endpoint_error_corrected_m", "endpoint_settle_s", "endpoint_improvement_m",
+    new_cols = ["endpoint_error_corrected_m", "depth_offset_m", "lateral_error_m",
+                "endpoint_settle_s", "endpoint_improvement_m",
                 "hand_speed_at_grasp_mps", "peak_speed_mps", "rt_speed_criterion_s",
                 "frames_in_reach"]
 
@@ -254,14 +264,14 @@ def main():
         mark_i = nearest_index(samples, t_mark)
 
         # --- closest approach, in the window after the grab ---
-        best_d, best_t = None, None
+        best_d, best_t, best_p = None, None, None
         for i in range(mark_i, len(samples)):
             t, x, y, z = samples[i]
             if t > t_mark + args.window:
                 break
             d = math.dist((x, y, z), (tx, ty, tz))
             if best_d is None or d < best_d:
-                best_d, best_t = d, t
+                best_d, best_t, best_p = d, t, (x, y, z)
 
         if best_d is not None:
             row["endpoint_error_corrected_m"] = f"{best_d:.5f}"
@@ -269,6 +279,29 @@ def main():
             original = num(g, "endpoint_error_m")
             if original is not None:
                 row["endpoint_improvement_m"] = f"{original - best_d:.5f}"
+
+            # --- split the error along and across the reach ---
+            #
+            # These are not the same quantity and should not be pooled into one number.
+            # Along the reach, the hand stops short because the grab fires before the hand
+            # has arrived and the ball then disappears, so there is nothing left to reach
+            # for: that distance is a property of the interaction. Across the reach, the
+            # hand is aiming, and the scatter is the participant's accuracy.
+            #
+            # The axis is home to target, where home is the fingertip at cue onset - the
+            # reach's own direction, not a world axis, so it stays correct wherever in the
+            # grid the target sits.
+            home = samples[0][1:4]
+            ax = (tx - home[0], ty - home[1], tz - home[2])
+            mag = math.sqrt(sum(c * c for c in ax))
+            if mag > 1e-6:
+                ax = tuple(c / mag for c in ax)
+                err = (best_p[0] - tx, best_p[1] - ty, best_p[2] - tz)
+                depth = sum(e * a for e, a in zip(err, ax))      # negative = stopped short
+                perp = tuple(e - depth * a for e, a in zip(err, ax))
+                lateral = math.sqrt(sum(c * c for c in perp))
+                row["depth_offset_m"] = f"{depth:.5f}"
+                row["lateral_error_m"] = f"{lateral:.5f}"
 
         row["hand_speed_at_grasp_mps"] = f"{sp[mark_i]:.4f}"
         row["peak_speed_mps"] = f"{max(sp[: mark_i + 1]) if mark_i > 0 else 0.0:.4f}"
@@ -315,6 +348,10 @@ def main():
         print(f"  endpoint error  was   {med(orig) * 100:.2f} cm (median)")
         print(f"                  now   {med(corr) * 100:.2f} cm (median)")
         print(f"                  diff  {med(imp) * 100:.2f} cm")
+        dep, lat = col("depth_offset_m"), col("lateral_error_m")
+        if dep and lat:
+            print(f"    of which depth      {med(dep) * 100:+.2f} cm (along the reach)")
+            print(f"    of which lateral    {med(lat) * 100:.2f} cm (across it - the aim)")
         print(f"  settle time           {med(settle) * 1000:.0f} ms after the grab")
         print(f"  speed at grab         {med(spd) * 1000:.0f} mm/s (median)")
     rts = col("rt_speed_criterion_s")

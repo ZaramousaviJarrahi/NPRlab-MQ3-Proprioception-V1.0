@@ -69,6 +69,7 @@ public class FingertipFrameLogger : MonoBehaviour
     public string currentFilePath = "";
 
     private DataRecorder _dataRecorder;
+    private TrialCounter _trialCounter;
     private StreamWriter _writer;
 
     private readonly List<string> _buffer = new List<string>(8192);
@@ -128,6 +129,7 @@ public class FingertipFrameLogger : MonoBehaviour
         if (_wired) return;
 
         if (_dataRecorder == null) _dataRecorder = GetComponent<DataRecorder>();
+        if (_trialCounter == null) _trialCounter = GetComponent<TrialCounter>();
 
         if (ControlManager.Singleton != null)
         {
@@ -199,9 +201,21 @@ public class FingertipFrameLogger : MonoBehaviour
         _pendingTargetIndex = d.targetIndex;
         _pendingTargetPosition = d.targetPosition;
 
-        // Each grasp pushes the stop out, so the window always covers the reach that is
-        // actually in progress. The trial ends when a reach is followed by a quiet second.
-        _stopAt = Time.time + secondsAfterLastGrasp;
+        // Only the LAST grasp of the trial starts the countdown.
+        //
+        // Pushing the stop out on every grasp looked equivalent and was not: it made
+        // secondsAfterLastGrasp a timeout BETWEEN grasps as well as after them, so a reach
+        // that took longer than it ended the trial's logging early and the grasps that
+        // followed were never marked. The 5 October test lost 2 of 33 that way - trial 5,
+        // where the second reach took 1.79 s against a 1.0 s window.
+        //
+        // Until the required grasps are in, the window set at cue onset stands: the trial
+        // runs to maxTrialSeconds, or until the next cue closes it. With no TrialCounter to
+        // ask, that is also the fallback - logging too long costs disk, logging too little
+        // costs the measurement.
+        int required = _trialCounter != null ? _trialCounter.CapturesRequired() : 0;
+        if (required > 0 && _graspInTrial >= required)
+            _stopAt = Time.time + secondsAfterLastGrasp;
     }
 
     // LateUpdate, not Update: ControlManager refreshes the fingertip positions in its own
