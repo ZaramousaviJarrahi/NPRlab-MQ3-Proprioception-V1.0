@@ -3,6 +3,7 @@
 # Origin moved to the mesh centre, and scaled so the bounding half-extent is 0.5,
 # matching Unity's built-in sphere, so it drops in at scale 1 as a like-for-like swap.
 o Apple_Red
+g Apple_Red
 v 0.161180 -0.399950 0.161180
 v 0.161180 -0.399950 -0.161180
 v 0.227943 -0.399950 0.000000
