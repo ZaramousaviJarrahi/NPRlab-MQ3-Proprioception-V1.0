@@ -737,6 +737,7 @@ public class SessionRunner : MonoBehaviour
     public int lastTrialForeperiodRestarts = 0;
 
     private HomeGate _homeGate;
+    private FingertipFrameLogger _frameLog;
     private HomeAudioGuide _homeAudio;
     private Coroutine _startRoutine;
     private Coroutine _rtRoutine;
@@ -1022,6 +1023,28 @@ public class SessionRunner : MonoBehaviour
         if (_taskSequencer != null) _taskSequencer.SetHomeMarkerState(TaskSequencer.HomeMarkerState.Neutral);
         if (_taskSequencer != null) _taskSequencer.StartTrial();
         if (_cues != null) _cues.Go();
+
+        // Frame-by-frame logging starts at the go signal, because that is what every
+        // measurement derived from it is timed from: reaction time by a speed criterion,
+        // and the endpoint at closest approach. The logger stops on its own once the
+        // trial's grasps are done, so there is nothing to call at the end of a trial, and
+        // a missing component costs the frame file and nothing else.
+        if (_frameLog == null)
+        {
+            _frameLog = GetComponent<FingertipFrameLogger>();
+            if (_frameLog == null)
+            {
+                // Added rather than skipped. A component nobody remembered to attach in the
+                // scene would cost a whole session of frame data and say nothing about it
+                // until the file was looked for - and that file is the only route to the
+                // corrected endpoint and to reaction time.
+                _frameLog = gameObject.AddComponent<FingertipFrameLogger>();
+                Debug.LogWarning("SessionRunner: no FingertipFrameLogger was attached, so one "
+                               + "was added at runtime with default settings. Attach it to this "
+                               + "GameObject in the scene to see its status or change its window.");
+            }
+        }
+        if (_frameLog != null) _frameLog.OnCueOnset(trialNumber);
         waitingToStartTrial = false;
 
         Debug.Log($"Trial {trialNumber}/{totalTrials} ({currentBlock}) - {_order[trialIndex]} - "
