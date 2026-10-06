@@ -1173,6 +1173,13 @@ public class SessionRunner : MonoBehaviour
 
         _trialRunning = false;
         waitingToStartTrial = true;
+
+        // The recorder counts grasps on its own and had no idea a trial had been given up on,
+        // so a partial count survived into the re-run and shifted every trial after it. It has
+        // to be told.
+        var recorder = GetComponent<DataRecorder>();
+        if (recorder != null) recorder.AbandonTrial();
+
         Debug.LogWarning($"SessionRunner: trial {trialIndex + 1} ABANDONED by the experimenter. "
                        + "Pressing start will run trial " + (trialIndex + 1) + " again. Note this "
                        + "in your session log - the abandoned attempt is still in the CSV.");

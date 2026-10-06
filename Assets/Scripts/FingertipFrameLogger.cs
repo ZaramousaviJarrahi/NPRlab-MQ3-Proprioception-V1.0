@@ -77,6 +77,8 @@ public class FingertipFrameLogger : MonoBehaviour
 
     private bool _logging = false;
     private int _trialNumber = 0;
+    private int _trialAttempt = 1;
+    private int _lastCueTrial = -1;
     private int _graspInTrial = 0;
     private float _cueOnsetTime = -1f;
     private float _stopAt = -1f;
@@ -92,7 +94,8 @@ public class FingertipFrameLogger : MonoBehaviour
         "trial_number,grasp_in_trial,frame,t_session_s,t_since_cue_s," +
         "left_tip_x,left_tip_y,left_tip_z,left_confidence,left_sample_t," +
         "right_tip_x,right_tip_y,right_tip_z,right_confidence,right_sample_t," +
-        "event,event_target_position_number,event_target_x,event_target_y,event_target_z";
+        "event,event_target_position_number,event_target_x,event_target_y,event_target_z," +
+        "trial_attempt";
 
     // grasp_in_trial    counts grasps seen since cue onset. On a frame carrying a grasp mark
     //                   it is the number of THAT grasp; on ordinary frames it is the number
@@ -169,6 +172,12 @@ public class FingertipFrameLogger : MonoBehaviour
         EnsureWired();
 
         if (_logging) EndTrial();   // a trial that never finished its grasps
+
+        // A second cue for the same trial number means the trial was abandoned and re-run.
+        // Without this the frame file would carry two traces under one key and the join to
+        // the per-grasp file on (trial_number, grasp_in_trial) would be ambiguous.
+        _trialAttempt = (trialNumber == _lastCueTrial) ? _trialAttempt + 1 : 1;
+        _lastCueTrial = trialNumber;
 
         _trialNumber = trialNumber;
         _graspInTrial = 0;
@@ -273,7 +282,8 @@ public class FingertipFrameLogger : MonoBehaviour
             leftConf.ToString(CultureInfo.InvariantCulture), D(leftSample),
             F(rt.x), F(rt.y), F(rt.z),
             rightConf.ToString(CultureInfo.InvariantCulture), D(rightSample),
-            ev, evIndex, evX, evY, evZ
+            ev, evIndex, evX, evY, evZ,
+            _trialAttempt.ToString(CultureInfo.InvariantCulture)
         }));
 
         framesWritten++;

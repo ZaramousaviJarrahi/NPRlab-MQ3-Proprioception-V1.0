@@ -50,6 +50,7 @@ public class DataRecorder : MonoBehaviour
     private bool _trialInProgress = false;
     private bool _numberingWarned = false;
     private float _lastGraspTime = -1f;
+    private int _trialAttempt = 1;
 
     private const string Header =
         "participant_id,visit,timestamp,block,condition,task,trial_number,grasp_in_trial,target_position_number," +
@@ -77,7 +78,13 @@ public class DataRecorder : MonoBehaviour
         // foreperiod_restarts  how many times the foreperiod restarted because the hand came off
         //                      the marker. A trial with restarts is valid; many of them is a
         //                      procedural problem, and one invisible in the data until now.
-        "grasp_outcome,home_hold_s,foreperiod_restarts";
+        // trial_attempt       1 for a trial run once. A trial the experimenter abandoned and
+        //                     re-ran leaves its partial grasps behind under the SAME trial
+        //                     number, because the trial really is that number - it was just
+        //                     attempted twice. Keep the rows with the HIGHEST trial_attempt
+        //                     for each trial_number and drop the rest; a trial_abandoned row
+        //                     marks where each abandoned attempt ended.
+        "grasp_outcome,home_hold_s,foreperiod_restarts,trial_attempt";
 
     void Start()
     {
@@ -221,12 +228,53 @@ public class DataRecorder : MonoBehaviour
         {
             trialsCompleted++;
             _trialNumber++;
+            _trialAttempt = 1;
             _graspInTrial = 0;
             _trialInProgress = false;
             _trialSpawnTime = -1f;
             _firstGraspTime = -1f;
             _lastGraspTime = -1f;
         }
+    }
+
+    /// The experimenter abandoned the trial part way through. Called by SessionRunner.
+    ///
+    /// WHY THIS HAS TO EXIST: this component counts grasps itself, and nothing was telling it
+    /// the trial had been given up on. _graspInTrial kept the partial count, and HandleSpawn
+    /// returns early while _trialInProgress is true, so re-running the trial did not reset it.
+    ///
+    /// Abandoning a three-grasp trial after two therefore left the counter at 2, and the FIRST
+    /// grasp of the re-run took it to 3 - completing "trial N" out of two grasps of the
+    /// abandoned attempt and one of the re-run, and moving on to N+1. The re-run's remaining two
+    /// grasps became trial N+1, the next real trial completed after one grasp, and the
+    /// misalignment carried to the end of the session. expected_position_number and
+    /// order_correct are derived from _graspInTrial, so order checking went wrong with it -
+    /// reporting order errors that never happened.
+    ///
+    /// Nothing failed while that happened. The file looked like a clean session with the trials
+    /// relabelled into a shape that never occurred, which is only findable by opening the CSV
+    /// and comparing it with a handwritten log.
+    public void AbandonTrial()
+    {
+        if (!_trialInProgress && _graspInTrial == 0) return;
+
+        // A row for the event itself, with no geometry, so the abandoned attempt is visible in
+        // the data rather than only in the console and the experimenter's notebook. Same
+        // treatment as a declined grasp: recorded, and easy to filter out.
+        var d = new ControlManager.CaptureData { targetIndex = 0 };
+        WriteRow(d, false, _graspInTrial, "", "", 0, "", "", "trial_abandoned");
+
+        Debug.LogWarning($"DataRecorder: trial {_trialNumber} abandoned after {_graspInTrial} "
+                       + $"grasp(s). Those rows stay in the file as attempt {_trialAttempt}; the "
+                       + $"re-run is attempt {_trialAttempt + 1}. Keep the highest attempt per "
+                       + "trial_number at analysis time.");
+
+        _trialAttempt++;
+        _graspInTrial = 0;
+        _trialInProgress = false;
+        _trialSpawnTime = -1f;
+        _firstGraspTime = -1f;
+        _lastGraspTime = -1f;
     }
 
     // A grasp the participant made that the app declined to count.
@@ -364,7 +412,8 @@ public class DataRecorder : MonoBehaviour
             outcome,
             startFactsMatch ? Secs(_sessionRunner.lastTrialHomeHoldSeconds) : "",
             startFactsMatch ? _sessionRunner.lastTrialForeperiodRestarts
-                                  .ToString(CultureInfo.InvariantCulture) : ""
+                                  .ToString(CultureInfo.InvariantCulture) : "",
+            _trialAttempt.ToString(CultureInfo.InvariantCulture)
         });
 
         _writer.WriteLine(row);   // AutoFlush is on, so this reaches disk straight away
