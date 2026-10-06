@@ -139,6 +139,30 @@ public class TrialCounter : MonoBehaviour
         }
     }
 
+    /// The experimenter abandoned the trial part way through. Called by SessionRunner.
+    ///
+    /// This counter is the one that decides a trial is OVER, so it is the one that does the
+    /// damage when it carries a partial count into a re-run. Abandoning a three-grasp trial
+    /// after two left it at 2; the FIRST grasp of the re-run reached the required 3, fired
+    /// OnTrialComplete, and moved the session on to the next task - mid-trial, from the
+    /// participant's point of view, with the remaining targets vanishing under their hand.
+    ///
+    /// The 6 October test shows it exactly: trial 3 re-run grasp 1 is TaskA as it should be,
+    /// and grasp 2 is already TaskB, expecting position 9. Everything after it is scored
+    /// against the wrong sequence.
+    ///
+    /// Only the within-trial count is cleared. _trialCount and the per-task counts must NOT
+    /// move, because the trial did not complete - it is about to be run again, and counting it
+    /// here would end the block one trial early.
+    public void AbandonTrial()
+    {
+        if (_captureCountInCurrentTrial == 0) return;
+        Debug.LogWarning($"TrialCounter: trial abandoned after {_captureCountInCurrentTrial} "
+                       + $"grasp(s) of {CapturesRequired()}. Count cleared; the trial total "
+                       + $"stays at {_trialCount} because this trial has not been completed.");
+        _captureCountInCurrentTrial = 0;
+    }
+
     void OnGUI()
     {
         string label;

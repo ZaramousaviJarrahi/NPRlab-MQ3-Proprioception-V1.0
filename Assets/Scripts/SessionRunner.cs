@@ -1174,11 +1174,23 @@ public class SessionRunner : MonoBehaviour
         _trialRunning = false;
         waitingToStartTrial = true;
 
-        // The recorder counts grasps on its own and had no idea a trial had been given up on,
-        // so a partial count survived into the re-run and shifted every trial after it. It has
-        // to be told.
+        // THREE components count grasps for themselves, and none of them could see that the
+        // trial had been given up on. Every one has to be told, or a partial count survives
+        // into the re-run.
+        //
+        // TrialCounter is the one that does the visible damage: it decides when a trial is
+        // over, so a stale count makes the re-run's first grasp end the trial and advance the
+        // task while the participant still has targets in front of them.
+        if (_trialCounter != null) _trialCounter.AbandonTrial();
+
         var recorder = GetComponent<DataRecorder>();
         if (recorder != null) recorder.AbandonTrial();
+
+        // The frame logger keys its trace on the trial number and counts its own grasps. It
+        // resets at the next cue, but closing the window here keeps the abandoned attempt as
+        // its own trace rather than leaving it open across the gap.
+        if (_frameLog == null) _frameLog = GetComponent<FingertipFrameLogger>();
+        if (_frameLog != null) _frameLog.OnTrialEnd();
 
         Debug.LogWarning($"SessionRunner: trial {trialIndex + 1} ABANDONED by the experimenter. "
                        + "Pressing start will run trial " + (trialIndex + 1) + " again. Note this "
