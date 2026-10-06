@@ -1680,6 +1680,7 @@ MonoBehaviour:
   rowsWritten: 0
   trialsCompleted: 0
   orderErrors: 0
+  ignoredGrasps: 0
   currentFilePath: 
 --- !u!114 &365879010
 MonoBehaviour:
@@ -1702,6 +1703,8 @@ MonoBehaviour:
   homeBelowBottomRow: -0.2
   homeTowardParticipant: 0.25
   homeMarkerSize: 0.05
+  useMeasuredHome: 1
+  homeMarkerFeedback: 1
   anchorToParticipant: 1
   taskA: 2,7,6
   taskB: 4,9,2
@@ -1750,7 +1753,7 @@ MonoBehaviour:
   participantPrefix: P
   visitNumber: 1
   useControllerButtons: 1
-  useKeyboard: 0
+  useKeyboard: 1
   showShortcutList: 1
   showTestButtons: 1
 --- !u!114 &365879013
@@ -1787,11 +1790,16 @@ MonoBehaviour:
   - 1
   - 3
   - 5
+  homeDwellSeconds: 0.4
+  restartForeperiodIfHomeLost: 1
+  maxForeperiodRestarts: 3
   lastTrialHomeVerified: 0
   lastForeperiod: -1
   lastReactionTime: -1
   lastTrialStartNumber: -1
   lastTrialFalseStart: 0
+  lastTrialHomeHoldSeconds: -1
+  lastTrialForeperiodRestarts: 0
 --- !u!114 &365879014
 MonoBehaviour:
   m_ObjectHideFlags: 0
