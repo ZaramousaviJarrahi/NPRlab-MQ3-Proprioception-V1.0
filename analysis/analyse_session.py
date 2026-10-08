@@ -613,6 +613,214 @@ def accuracy_table(rows):
     return out
 
 
+# ============================================================================
+# VICON
+#
+# Optional. Everything above runs on the two Quest files alone and needs nothing
+# installed; this section needs numpy, for the cross-correlation only.
+#
+# THE ALIGNMENT PROBLEM, AND WHY IT IS SOLVABLE WITHOUT A SYNC SIGNAL
+#
+# Nothing connects the two systems: Vicon frame 1 and the Quest's session clock
+# start at unrelated moments, so a Vicon capture is one undifferentiated block
+# with no way to say which frames belong to which trial.
+#
+# But both systems recorded the SAME HAND. Vicon's RFIN marker and the Quest's
+# index fingertip trace the same movement, so their speed profiles are the same
+# signal sampled twice. Cross-correlating them recovers the offset - the
+# movement is the sync signal.
+#
+# On the 8 October pilot this gave a lag of 3.810 s with a peak 6x clearer than
+# any rival, and it was checked against information the correlation never saw:
+# at the 60 cue onsets, where the home gate guarantees the hand is stationary,
+# the aligned Vicon speed reads 26 mm/s against a 102 mm/s baseline. Scanning
+# the lag puts a cliff at +4.15 s, which is where the assumed cue starts landing
+# after movement onset; onset is about 400 ms after the cue, implying a lag near
+# 3.75 s. Two methods, 60 ms apart.
+#
+# That 60 ms is the honest precision. It is ample for labelling frames by trial
+# and for 100 Hz kinematics; it is not frame-exact, and the lag is one number
+# for a whole session, so it assumes the clocks do not drift. Over nine minutes
+# that holds. It is re-estimated per session rather than carried across.
+# ============================================================================
+
+VICON_COLS = ["vicon_peak_speed_mps", "vicon_path_ratio", "vicon_speed_peaks",
+              "vicon_normalised_jerk", "vicon_transport_time_s"]
+
+
+def read_vicon_rfin(path):
+    """
+    Pull the RFIN marker out of a Nexus CSV export.
+
+    The export holds several sections (Joints, Model Outputs, Segments,
+    Trajectories), each with its own header block and its own frame coverage.
+    Trajectories carries the raw markers and is usually the only one covering
+    the whole trial - the modelled sections are empty unless the pipeline has
+    been run over the full range in Nexus.
+
+    Returns (times_seconds, positions_metres, rate) or None.
+    """
+    rows = []
+    with open(path, newline="", encoding="utf-8-sig") as fh:
+        rows = list(csv.reader(fh))
+
+    known = {"Joints", "Trajectories", "Model Outputs", "Segments", "Devices"}
+    secs = [(i, r[0].strip()) for i, r in enumerate(rows) if r and r[0].strip() in known]
+    traj = next((i for i, nm in secs if nm == "Trajectories"), None)
+    if traj is None:
+        return None
+
+    rate = float(rows[traj + 1][0])
+    objs = rows[traj + 2]
+    col = next((k for k, c in enumerate(objs) if c.strip().endswith("RFIN")), None)
+    if col is None:
+        return None
+
+    end = next((i for i, _ in secs if i > traj), len(rows))
+    t, p = [], []
+    for r in rows[traj + 5:end]:
+        if not r or len(r) < col + 3:
+            continue
+        try:
+            f = int(r[0])
+        except ValueError:
+            continue
+        v = r[col:col + 3]
+        if all(c.strip() for c in v):
+            t.append(f / rate)
+            p.append((float(v[0]) / 1000.0, float(v[1]) / 1000.0, float(v[2]) / 1000.0))
+    if len(t) < 100:
+        return None
+    return t, p, rate
+
+
+def estimate_lag(vt, vp, rate, frames):
+    """
+    Offset between the Quest session clock and Vicon time, by cross-correlating
+    the two speed profiles. Returns (lag_seconds, z_score_of_peak).
+
+    The Quest logger only runs during trials, so its profile has gaps; those are
+    left as zeros. The signal is distinctive enough that it still locks on, and
+    the z-score reports how clearly - below about 8 the result should not be
+    trusted, and the summary says so.
+    """
+    import numpy as np
+
+    vt = np.asarray(vt)
+    vp = np.asarray(vp)
+    vsp = np.zeros(len(vt))
+    dt = vt[2:] - vt[:-2]
+    ok = dt > 0
+    vsp[1:-1][ok] = np.linalg.norm(vp[2:][ok] - vp[:-2][ok], axis=1) / dt[ok]
+
+    qt, qp, last = [], [], None
+    for r in frames:
+        if (r.get("right_confidence") or "").strip() in ("", "-1"):
+            continue
+        smp = r.get("right_sample_t")
+        if smp == last:
+            continue
+        last = smp
+        qt.append(float(r["t_session_s"]))
+        qp.append([float(r["right_tip_x"]), float(r["right_tip_y"]), float(r["right_tip_z"])])
+    if len(qt) < 100:
+        return None, 0.0
+    qt = np.asarray(qt)
+    qp = np.asarray(qp)
+    qsp = np.zeros(len(qt))
+    dt = qt[2:] - qt[:-2]
+    ok = dt > 0
+    qsp[1:-1][ok] = np.linalg.norm(qp[2:][ok] - qp[:-2][ok], axis=1) / dt[ok]
+    qsp = np.clip(qsp, 0, 5.0)          # drop tracking spikes before correlating
+
+    t0 = qt.min()
+    dur = max(vt[-1], qt[-1] - t0) + 60
+    n = int(dur * rate) + 1
+    V = np.zeros(n)
+    V[np.clip((vt * rate).astype(int), 0, n - 1)] = vsp
+    Q = np.zeros(n)
+    Q[np.clip(((qt - t0) * rate).astype(int), 0, n - 1)] = qsp
+
+    k = np.ones(int(0.25 * rate))
+    k /= k.sum()
+    Ve = np.convolve(V, k, "same")
+    Qe = np.convolve(Q, k, "same")
+    Ve -= Ve.mean()
+    Qe -= Qe.mean()
+
+    N = 1 << (2 * n - 1).bit_length()
+    C = np.fft.irfft(np.fft.rfft(Ve, N) * np.conj(np.fft.rfft(Qe, N)), N)
+    C = np.concatenate([C[-(n - 1):], C[:n]])
+    lags = np.arange(-n + 1, n)
+    best = int(np.argmax(C))
+    z = (C[best] - C.mean()) / (C.std() or 1.0)
+    return lags[best] / rate, z
+
+
+def add_vicon(rows, frames, vicon_path, cutoff_hz, transport_frac):
+    """Label Vicon frames by trial and grasp, and derive the same measures from RFIN."""
+    got = read_vicon_rfin(vicon_path)
+    if got is None:
+        return rows, None, 0.0, "no usable Trajectories/RFIN section in that file"
+    vt, vp, rate = got
+
+    try:
+        lag, z = estimate_lag(vt, vp, rate, frames)
+    except ImportError:
+        return rows, None, 0.0, "numpy is needed for Vicon alignment (pip3 install numpy)"
+    if lag is None:
+        return rows, None, 0.0, "not enough overlapping movement to align"
+
+    t0 = min(float(r["t_session_s"]) for r in frames)
+    samples = [(vt[i], vp[i][0], vp[i][1], vp[i][2]) for i in range(len(vt))]
+    samples = smooth(samples, cutoff_hz)
+    sp = speeds(samples)
+
+    def at(t_session):
+        return nearest_index(samples, t_session - t0 + lag)
+
+    # map every grasp to its Vicon window, using the SAME transport logic as the
+    # Quest side so the two are measured the same way and can be compared
+    marks = defaultdict(dict)
+    for fr in frames:
+        if (fr.get("event") or "").strip() == "grasp":
+            key = ((fr.get("trial_number") or "").strip(), (fr.get("trial_attempt") or "1").strip())
+            marks[key][(fr.get("grasp_in_trial") or "").strip()] = float(fr["t_session_s"])
+
+    done = 0
+    for row in rows:
+        for c in VICON_COLS:
+            row.setdefault(c, "")
+        if (row.get("grasp_outcome") or "").strip() != "recorded":
+            continue
+        key = ((row.get("trial_number") or "").strip(), (row.get("trial_attempt") or "1").strip())
+        gn = (row.get("grasp_in_trial") or "").strip()
+        if key not in marks or gn not in marks[key]:
+            continue
+        i1 = at(marks[key][gn])
+        prev = marks[key].get(str(int(gn) - 1))
+        i0 = at(prev) if prev is not None else max(0, i1 - int(2.0 * rate))
+        if i1 - i0 < 10:
+            continue
+        a, b = transport_window(sp, i0, i1, transport_frac)
+        seg = sp[a:b + 1]
+        if not seg:
+            continue
+        row["vicon_peak_speed_mps"] = f"{max(seg):.4f}"
+        row["vicon_speed_peaks"] = str(count_speed_peaks(sp, a, b))
+        row["vicon_transport_time_s"] = f"{samples[b][0] - samples[a][0]:.4f}"
+        straight = math.dist(samples[a][1:4], samples[b][1:4])
+        if straight > 1e-4:
+            path = sum(math.dist(samples[i][1:4], samples[i + 1][1:4]) for i in range(a, b))
+            row["vicon_path_ratio"] = f"{path / straight:.4f}"
+        nj = normalised_jerk(samples, a, b)
+        if nj is not None:
+            row["vicon_normalised_jerk"] = f"{nj:.2f}"
+        done += 1
+
+    return rows, lag, z, f"{done} grasps labelled"
+
+
 def write(path, rows, fieldnames):
     with open(path, "w", newline="", encoding="utf-8") as fh:
         w = csv.DictWriter(fh, fieldnames=fieldnames, extrasaction="ignore")
@@ -626,6 +834,10 @@ def main():
     ap.add_argument("grasp_csv", help="the per-grasp file")
     ap.add_argument("frames_csv", nargs="?", default=None,
                     help="the matching _frames.csv (found automatically if omitted)")
+    ap.add_argument("--vicon", default=None,
+                    help="optional Nexus CSV export. Aligned to the Quest by "
+                         "cross-correlating the two hand-speed profiles; no sync "
+                         "signal needed. Requires numpy.")
     ap.add_argument("--window", type=float, default=0.40,
                     help="seconds after the grab to search for closest approach (default 0.40)")
     ap.add_argument("--onset-frac", type=float, default=0.05,
@@ -656,8 +868,15 @@ def main():
     trials = per_trial(rows)
     acc = accuracy_table(rows)
 
+    vicon_lag = vicon_z = None
+    vicon_note = ""
+    if args.vicon:
+        rows, vicon_lag, vicon_z, vicon_note = add_vicon(
+            rows, frames, args.vicon, args.cutoff_hz, args.transport_frac)
+
     stem = args.grasp_csv.rsplit(".", 1)[0]
-    write(stem + "_grasps.csv", rows, list(grasps[0].keys()) + NEW_COLS)
+    cols = list(grasps[0].keys()) + NEW_COLS + (VICON_COLS if args.vicon else [])
+    write(stem + "_grasps.csv", rows, cols)
     write(stem + "_trials.csv", trials, list(trials[0].keys()) if trials else [])
     write(stem + "_accuracy.csv", acc, list(acc[0].keys()) if acc else [])
 
@@ -704,6 +923,21 @@ def main():
     print(f"\n  TRACKING")
     print(f"    hand position low-passed at {args.cutoff_hz:.0f} Hz before speed/path/jerk")
     print(f"    frames {len(frames)}, untracked {len(conf)} ({100.0 * len(conf) / max(1, len(frames)):.1f}%)")
+
+    if args.vicon:
+        print(f"\n  VICON")
+        if vicon_lag is None:
+            print(f"    not used: {vicon_note}")
+        else:
+            trust = "clear" if vicon_z >= 8 else "WEAK - check this"
+            print(f"    alignment lag {vicon_lag:+.3f} s   peak z={vicon_z:.1f}  ({trust})")
+            print(f"    {vicon_note}")
+            print(f"    peak speed      {med(col('vicon_peak_speed_mps')) * 1000:6.0f} mm/s   "
+                  f"(Quest: {med(col('peak_speed_mps')) * 1000:.0f})")
+            print(f"    path ratio      {med(col('vicon_path_ratio')):6.3f}      "
+                  f"(Quest: {med(col('path_ratio')):.3f})")
+            print(f"    speed peaks     {med(col('vicon_speed_peaks')):6.1f}      "
+                  f"(Quest: {med(col('speed_peaks')):.1f})")
 
     print(f"\n  WROTE")
     for suffix in ("_grasps.csv", "_trials.csv", "_accuracy.csv"):
