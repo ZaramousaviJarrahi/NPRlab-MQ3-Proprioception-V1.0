@@ -776,8 +776,24 @@ def add_vicon(rows, frames, vicon_path, cutoff_hz, transport_frac):
     samples = smooth(samples, cutoff_hz)
     sp = speeds(samples)
 
+    v_first, v_last = samples[0][0], samples[-1][0]
+
     def at(t_session):
-        return nearest_index(samples, t_session - t0 + lag)
+        """
+        Vicon sample index for a Quest timestamp, or None if that moment is
+        outside the capture.
+
+        The bounds check is not optional. nearest_index returns the CLOSEST
+        sample, so without it every grasp after the end of the Vicon data maps
+        silently to its last frame and yields a number that looks like a
+        measurement. A Nexus export truncated to part of the session - which is
+        easy to produce, and was how this was found - would then report Vicon
+        measures for trials it never recorded.
+        """
+        t = t_session - t0 + lag
+        if t < v_first or t > v_last:
+            return None
+        return nearest_index(samples, t)
 
     # map every grasp to its Vicon window, using the SAME transport logic as the
     # Quest side so the two are measured the same way and can be compared
@@ -798,8 +814,12 @@ def add_vicon(rows, frames, vicon_path, cutoff_hz, transport_frac):
         if key not in marks or gn not in marks[key]:
             continue
         i1 = at(marks[key][gn])
+        if i1 is None:
+            continue
         prev = marks[key].get(str(int(gn) - 1))
-        i0 = at(prev) if prev is not None else max(0, i1 - int(2.0 * rate))
+        i0 = at(prev) if prev is not None else None
+        if i0 is None:
+            i0 = max(0, i1 - int(2.0 * rate))
         if i1 - i0 < 10:
             continue
         a, b = transport_window(sp, i0, i1, transport_frac)
@@ -818,7 +838,8 @@ def add_vicon(rows, frames, vicon_path, cutoff_hz, transport_frac):
             row["vicon_normalised_jerk"] = f"{nj:.2f}"
         done += 1
 
-    return rows, lag, z, f"{done} grasps labelled"
+    pct = 100.0 * done / max(1, sum(1 for r in rows if (r.get("grasp_outcome") or "").strip() == "recorded"))
+    return rows, lag, z, f"{done} grasps labelled ({pct:.0f}% of the session covered by this export)"
 
 
 def write(path, rows, fieldnames):
