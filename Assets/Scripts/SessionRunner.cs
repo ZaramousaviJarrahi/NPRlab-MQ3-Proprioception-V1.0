@@ -425,7 +425,7 @@ public class SessionRunner : MonoBehaviour
                                       RunLengthAt(i) >= MinRunToCountAsBlock;
                     if (blockChanged || newTaskRun) s.AppendLine();
                 }
-                string fore = (i < _foreperiodOf.Count) ? $"{_foreperiodOf[i]:F0}s" : "?";
+                string fore = (i < _foreperiodOf.Count) ? $"{_foreperiodOf[i]:F1}s" : "?";
                 s.AppendLine($"{i + 1,5}  {_blockOf[i],-15}  {_order[i],-6}  {fore,-4}  {SequenceFor(_order[i])}");
             }
 
@@ -440,6 +440,12 @@ public class SessionRunner : MonoBehaviour
 
     // One foreperiod per trial, decided when the session is planned.
     private readonly List<float> _foreperiodOf = new List<float>();
+
+    // The balanced discrete base before jitter. Kept separately because the balance log,
+    // the summary and the plan file all group trials by foreperiod LENGTH - after jitter
+    // every value is unique, so grouping on the jittered number would report 60 groups of
+    // one and hide the very balance it exists to show.
+    private readonly List<float> _foreperiodBaseOf = new List<float>();
 
     // Gives every (block, task) group an equal number of each foreperiod, then shuffles within
     // the group.
@@ -463,11 +469,12 @@ public class SessionRunner : MonoBehaviour
     private void AssignForeperiods()
     {
         _foreperiodOf.Clear();
+        _foreperiodBaseOf.Clear();
 
         float[] options = (foreperiodSeconds != null && foreperiodSeconds.Length > 0)
                             ? foreperiodSeconds : new float[] { 2f };
 
-        for (int i = 0; i < _order.Count; i++) _foreperiodOf.Add(options[0]);
+        for (int i = 0; i < _order.Count; i++) { _foreperiodOf.Add(options[0]); _foreperiodBaseOf.Add(options[0]); }
 
         System.Random rng = randomSeed == 0 ? new System.Random()
                                             : new System.Random(randomSeed + 7919);
@@ -517,13 +524,22 @@ public class SessionRunner : MonoBehaviour
                 (pool[i], pool[j]) = (pool[j], pool[i]);
             }
 
-            for (int i = 0; i < members.Count; i++) _foreperiodOf[members[i]] = pool[i];
+            for (int i = 0; i < members.Count; i++)
+            {
+                _foreperiodBaseOf[members[i]] = pool[i];
+
+                // Jitter from the SAME seeded rng, so a session stays reproducible from
+                // allocation.csv alone, exactly as the balanced order already is.
+                float j = foreperiodJitterSeconds <= 0f ? 0f
+                        : (float)((rng.NextDouble() * 2.0 - 1.0) * foreperiodJitterSeconds);
+                _foreperiodOf[members[i]] = Mathf.Max(MinJitteredForeperiod, pool[i] + j);
+            }
         }
 
         // Say what came out, so an imbalance is visible in the log rather than discovered in the
         // data afterwards.
         var counts = new Dictionary<float, int>();
-        foreach (float f in _foreperiodOf) { counts.TryGetValue(f, out int c); counts[f] = c + 1; }
+        foreach (float f in _foreperiodBaseOf) { counts.TryGetValue(f, out int c); counts[f] = c + 1; }
         var parts = new List<string>();
         foreach (float f in options) { counts.TryGetValue(f, out int c); parts.Add($"{c} x {f:F0}s"); }
         Debug.Log($"Foreperiods assigned, balanced within each block and task: {string.Join(", ", parts)} "
@@ -543,7 +559,11 @@ public class SessionRunner : MonoBehaviour
                        + $"({_foreperiodOf.Count} planned, {_order.Count} trials), so one was drawn at "
                        + "random. The session's foreperiods are no longer balanced - note it, and "
                        + "check the plan file against the data.");
-        return options[Random.Range(0, options.Length)];
+        float fb = options[Random.Range(0, options.Length)];
+        if (foreperiodJitterSeconds > 0f)
+            fb = Mathf.Max(MinJitteredForeperiod,
+                           fb + Random.Range(-foreperiodJitterSeconds, foreperiodJitterSeconds));
+        return fb;
     }
 
     // The foreperiod counts, for the plan file header. Lets the experimenter see at a glance
@@ -559,7 +579,7 @@ public class SessionRunner : MonoBehaviour
         if (_foreperiodOf.Count == 0) return "not assigned";
 
         var lengths = new List<float>();
-        foreach (float f in _foreperiodOf) if (!lengths.Contains(f)) lengths.Add(f);
+        foreach (float f in _foreperiodBaseOf) if (!lengths.Contains(f)) lengths.Add(f);
         lengths.Sort();
 
         var perBlock = new Dictionary<string, Dictionary<float, int>>();
@@ -572,8 +592,8 @@ public class SessionRunner : MonoBehaviour
                 perBlock[_blockOf[i]] = c;
                 blockOrder.Add(_blockOf[i]);
             }
-            c.TryGetValue(_foreperiodOf[i], out int n);
-            c[_foreperiodOf[i]] = n + 1;
+            c.TryGetValue(_foreperiodBaseOf[i], out int n);
+            c[_foreperiodBaseOf[i]] = n + 1;
         }
 
         var blocks = new List<string>();
@@ -682,6 +702,22 @@ public class SessionRunner : MonoBehaviour
              "signal and start moving before it, which destroys reaction time as a measure - " +
              "and reaction time is where Shea & Morgan's effect was largest.")]
     public float[] foreperiodSeconds = { 1f, 3f, 5f };
+
+    [Tooltip("Random jitter added to each trial's foreperiod, in seconds, drawn uniformly in "
+           + "+/- this value.\n\n"
+           + "The lengths above are BALANCED within each block and task, which is worth keeping: "
+           + "it lets you show the foreperiod was level across conditions. But three fixed "
+           + "lengths are learnable, and the 8 October pilot showed they were learnt - seven of "
+           + "54 acquisition trials had the hand already moving faster than 100 mm/s at cue "
+           + "onset, and two produced no measurable reaction time at all.\n\n"
+           + "Jitter keeps the balance and removes the predictability: the participant can still "
+           + "learn that foreperiods are roughly short, medium or long, but cannot time the exact "
+           + "moment. Zero restores the old fixed behaviour.")]
+    public float foreperiodJitterSeconds = 0.5f;
+
+    // Shortest foreperiod jitter may produce. A jittered 1 s base must still be long enough to
+    // be a foreperiod rather than effectively no delay.
+    private const float MinJitteredForeperiod = 0.4f;
 
     [Tooltip("How long the hand must stay CONTINUOUSLY at the home marker before the foreperiod "
            + "begins, in seconds.\n\n"
