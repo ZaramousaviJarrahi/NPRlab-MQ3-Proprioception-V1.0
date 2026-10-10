@@ -63,6 +63,15 @@ public class FingertipFrameLogger : MonoBehaviour
            + "Without it a lost trial would log until the next cue.")]
     public float maxTrialSeconds = 30f;
 
+    [Tooltip("Extra seconds allowed on the trial timeout when the window opens at the warning "
+           + "tone rather than the cue, to cover the foreperiod that runs before it. A safety "
+           + "margin only - the window still closes on the last grasp as usual.")]
+    public float preCueBudgetSeconds = 10f;
+
+    // False between the warning tone and the cue, while t_since_cue_s is not yet meaningful.
+    // Those rows end up with a negative time once the cue restamps the origin.
+    private bool _cueStamped = false;
+
     [Header("Status (read-only)")]
     public int framesWritten = 0;
     public int trialsLogged = 0;
@@ -162,13 +171,58 @@ public class FingertipFrameLogger : MonoBehaviour
     }
 
     /// <summary>
-    /// Called by SessionRunner at cue onset. Starts logging for this trial, and closes out
-    /// the previous one if it was somehow still open.
+    /// Called by SessionRunner at the WARNING TONE, before the foreperiod runs. Opens the
+    /// frame window early so the trace covers the time before the cue as well as after it.
+    ///
+    /// WHY THIS EXISTS. The window used to open at cue onset, which made the first logged
+    /// sample and the cue the same moment, so anything the hand did before the go signal was
+    /// invisible. Two things followed from that on the 8 October pilot. Onset detection walks
+    /// back from peak speed to the last sample below 5% of peak, and in trials where the hand
+    /// was already moving it had nowhere to walk back to: it returned the first sample, giving
+    /// a reaction time of exactly 0 s, and movement time then absorbed the whole trial. And
+    /// seven of 54 acquisition trials had the hand already travelling faster than 100 mm/s at
+    /// the cue, which could only be inferred from that first sample rather than seen.
+    ///
+    /// With the window open through the foreperiod, t_since_cue_s runs NEGATIVE before the
+    /// cue. An early start is then visible directly: a trial whose speed rises before t = 0
+    /// anticipated the go signal, whatever reaction time the onset search produces for it.
+    ///
+    /// Idempotent per trial, so a restarted foreperiod keeps one continuous trace - the
+    /// movement that caused the restart is exactly what belongs on the record.
+    /// </summary>
+    public void OnWarningTone(int trialNumber)
+    {
+        if (!recordFrames) return;
+        if (_logging && trialNumber == _trialNumber) return;   // foreperiod restarted
+        BeginWindow(trialNumber, cueKnown: false);
+    }
+
+    /// <summary>
+    /// Called by SessionRunner at cue onset. When the window is already open from the warning
+    /// tone this only stamps the cue; otherwise it opens the window too, so a scene that never
+    /// calls OnWarningTone behaves exactly as it did before.
     /// </summary>
     public void OnCueOnset(int trialNumber)
     {
         if (!recordFrames) return;
 
+        if (_logging && trialNumber == _trialNumber && !_cueStamped)
+        {
+            // Window already open: set the cue origin here and let LateUpdate write the cue
+            // row this frame, as it would have done on a cold start.
+            _cueOnsetTime = Time.time;
+            _cueStamped = true;
+            _stopAt = Time.time + maxTrialSeconds;
+            _graspPending = false;
+            _pendingTargetIndex = -2;
+            return;
+        }
+
+        BeginWindow(trialNumber, cueKnown: true);
+    }
+
+    private void BeginWindow(int trialNumber, bool cueKnown)
+    {
         EnsureWired();
 
         if (_logging) EndTrial();   // a trial that never finished its grasps
@@ -181,8 +235,9 @@ public class FingertipFrameLogger : MonoBehaviour
 
         _trialNumber = trialNumber;
         _graspInTrial = 0;
-        _cueOnsetTime = Time.time;
-        _stopAt = Time.time + maxTrialSeconds;
+        _cueOnsetTime = Time.time;   // provisional when cueKnown is false; restamped at the cue
+        _cueStamped = cueKnown;
+        _stopAt = Time.time + maxTrialSeconds + (cueKnown ? 0f : preCueBudgetSeconds);
         _logging = true;
 
         // The cue row is written by LateUpdate this frame, with the fingertip positions on it,

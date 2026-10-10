@@ -969,6 +969,11 @@ public class SessionRunner : MonoBehaviour
                 // ---- warning tone, then the foreperiod, with home watched every frame ----
                 if (_cues != null) _cues.Warning();
 
+                // Open the frame window HERE, not at the cue: a reaction that began before
+                // the go signal is only visible if the trace covers the foreperiod.
+                if (_frameLog == null) _frameLog = GetComponent<FingertipFrameLogger>();
+                if (_frameLog != null) _frameLog.OnWarningTone(trialNumber);
+
                 float foreperiodEnds = Time.time + fp;
                 bool homeLost = false;
                 while (Time.time < foreperiodEnds)
@@ -1008,6 +1013,8 @@ public class SessionRunner : MonoBehaviour
             if (_homeGate != null) homeAtArm = _homeGate.atHome;   // not gating, but still recording
 
             if (_cues != null) _cues.Warning();
+            if (_frameLog == null) _frameLog = GetComponent<FingertipFrameLogger>();
+            if (_frameLog != null) _frameLog.OnWarningTone(trialNumber);
             yield return new WaitForSeconds(fp);
         }
 
