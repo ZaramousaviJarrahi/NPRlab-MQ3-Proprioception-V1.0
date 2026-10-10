@@ -57,7 +57,7 @@ public class DataRecorder : MonoBehaviour
         "time_since_spawn_s,time_since_first_grasp_s,endpoint_error_m," +
         "target_x,target_y,target_z,fingertip_x,fingertip_y,fingertip_z," +
         "hand_used,hands_visible,simulated,grid_width_m,grid_height_m,grid_distance_m," +
-        "expected_position_number,order_correct,home_verified,false_start,foreperiod_s,reaction_time_s," +
+        "expected_position_number,order_correct,home_verified,false_start,foreperiod_s,cue_to_home_exit_s," +
         "reach_time_s," +
 
         // Appended rather than slotted in next to the columns they belong with, on purpose:
@@ -345,7 +345,7 @@ public class DataRecorder : MonoBehaviour
             Debug.LogWarning($"DataRecorder is writing trial {_trialNumber} while SessionRunner "
                            + $"started trial {_sessionRunner.lastTrialStartNumber}. The two are "
                            + "counting differently, so home_verified, foreperiod_s and "
-                           + "reaction_time_s are being left blank rather than guessed at.");
+                           + "cue_to_home_exit_s are being left blank rather than guessed at.");
         }
 
         string row = string.Join(",", new string[] {
@@ -394,9 +394,12 @@ public class DataRecorder : MonoBehaviour
             // foreperiod_s    which of the three foreperiods this trial drew. Needed to show
             //                 the foreperiod really was unpredictable, and to check that
             //                 reaction time does not depend on it.
-            // reaction_time_s cue onset to the hand leaving home. Blank when it could not be
-            //                 measured. This is the measure the effect was largest on in
-            //                 Shea & Morgan, so it should not live only in a log file.
+            // cue_to_home_exit_s  cue onset to the hand leaving the home region. This is
+            //                 NOT movement onset: the hand can accelerate while still inside
+            //                 the home volume, and in pilot data this ran a median 188 ms
+            //                 later than the 5%-of-peak speed criterion. Reaction time is
+            //                 rt_speed_criterion_s, computed offline. Blank when it could
+            //                 not be measured.
             //
             // The values are read at the moment the row is written, which is inside the
             // trial they belong to: SessionRunner clears all three when the NEXT trial arms,

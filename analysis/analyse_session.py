@@ -560,7 +560,7 @@ def per_trial(rows):
             "false_start": first.get("false_start", ""),
             "grasps": str(len(rs)),
             "total_trial_time_s": fmt(t_end, 4),
-            "reaction_time_s": fmt(rt, 4),
+            "rt_speed_criterion_s": fmt(rt, 4),
             "movement_time_s": fmt(t_end - rt, 4) if (t_end is not None and rt is not None) else "",
             "order_errors": str(sum(1 for r in rs if (r.get("order_correct") or "").strip() == "FALSE")),
             "mean_lateral_error_m": fmt(st.mean([v for v in (num(r, "lateral_error_m") for r in rs) if v is not None]), 5)
@@ -896,7 +896,17 @@ def main():
             rows, frames, args.vicon, args.cutoff_hz, args.transport_frac)
 
     stem = args.grasp_csv.rsplit(".", 1)[0]
-    cols = list(grasps[0].keys()) + NEW_COLS + (VICON_COLS if args.vicon else [])
+
+    # The app's own column measures cue onset to the hand LEAVING THE HOME REGION.
+    # That is not movement onset: in pilot data it ran a median 188 ms later than
+    # the speed criterion, because the hand can accelerate while still inside the
+    # home volume. Emit it under a name that says so, and accept either spelling
+    # from the source file so sessions recorded before the rename still process.
+    for _r in rows:
+        if "reaction_time_s" in _r:
+            _r["cue_to_home_exit_s"] = _r.pop("reaction_time_s")
+    cols = [("cue_to_home_exit_s" if c == "reaction_time_s" else c)
+            for c in grasps[0].keys()] + NEW_COLS + (VICON_COLS if args.vicon else [])
     write(stem + "_grasps.csv", rows, cols)
     write(stem + "_trials.csv", trials, list(trials[0].keys()) if trials else [])
     write(stem + "_accuracy.csv", acc, list(acc[0].keys()) if acc else [])
@@ -922,7 +932,7 @@ def main():
 
     print(f"\n  TIMING")
     print(f"    total trial time     {med(col('total_trial_time_s', trials)):6.3f} s")
-    print(f"    reaction time        {med(col('reaction_time_s', trials)) * 1000:6.0f} ms   (5% of peak speed)")
+    print(f"    reaction time        {med(col('rt_speed_criterion_s', trials)) * 1000:6.0f} ms   (5% of peak speed)")
     print(f"    movement time        {med(col('movement_time_s', trials)):6.3f} s")
     print(f"    reach time per grasp {med(col('reach_time_corrected_s')):6.3f} s")
     print(f"    transport per reach  {med(col('transport_time_s')):6.3f} s   (the movement itself)")
