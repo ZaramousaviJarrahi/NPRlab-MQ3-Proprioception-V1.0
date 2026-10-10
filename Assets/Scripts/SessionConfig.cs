@@ -424,9 +424,11 @@ public class SessionConfig : MonoBehaviour
 "trialsPerTask         = 18\r\n" +
 "\r\n" +
 "# Target sequences, as grid positions 1-9 (1 = top-left, 9 = bottom-right).\r\n" +
+"# These MUST match the Inspector values on TaskSequencer. The file wins, so a\r\n" +
+"# mismatch silently changes the sequences for every session that uses this file.\r\n" +
 "taskA = 2,7,6\r\n" +
-"taskB = 2,9,4\r\n" +
-"taskC = 4,3,8\r\n" +
+"taskB = 4,9,2\r\n" +
+"taskC = 8,3,4\r\n" +
 "\r\n" +
 "# Visit 2 only. Novel transfer sequences and trial counts.\r\n" +
 "transfer3 = 6,1,8\r\n" +

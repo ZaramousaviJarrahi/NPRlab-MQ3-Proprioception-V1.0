@@ -66,9 +66,21 @@ public class TaskSequencer : MonoBehaviour
     [Header("The three matched sequences (grid positions 1-9)")]
     [Tooltip("Task A order, comma separated. Must be matched with B and C on total " +
              "reach distance and number of direction changes - see the study plan.")]
+    //
+    // THESE DEFAULTS, THE SCENE AND session_config_TEMPLATE.txt MUST ALL AGREE.
+    // They did not: these defaults and the template read B = 2,9,4 and C = 4,3,8, while the
+    // scene - and so every recorded session, the 8 Oct pilot included - ran B = 4,9,2 and
+    // C = 8,3,4. Uploading a session_config.txt would have silently reversed B and C
+    // mid-study, because the file wins over the Inspector.
+    //
+    // All three now match what has actually been run. Total path (101.02 cm) and turn angle
+    // (144 deg) are identical either way, so the matching is unaffected; what differs is
+    // which target receives the standardised reach from home. Which direction is intended
+    // is still open with the supervisor - if the plan table is right, change the scene,
+    // these defaults and the template together, deliberately.
     public string taskA = "2,7,6";
-    public string taskB = "2,9,4";
-    public string taskC = "4,3,8";
+    public string taskB = "4,9,2";
+    public string taskC = "8,3,4";
 
     [Header("Visit 2 transfer sequences (novel - never practised)")]
     [Tooltip("Same-complexity transfer. Matched to A, B and C: 1.011 m of reach, two " +
