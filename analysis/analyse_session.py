@@ -241,8 +241,15 @@ def onset_index(sp, end_i, frac):
     thr = frac * peak
     for i in range(peak_i, -1, -1):
         if sp[i] < thr:
-            return i
-    return 0
+            # Index 0 is ambiguous and must not be reported as an onset. The frame
+            # log starts AT cue onset, so a sub-threshold sample at index 0 means
+            # onset was at or before the first sample there is - which is not a
+            # measurable onset, and as a reaction time comes out as exactly 0.
+            return i if i > 0 else None
+    # Walked all the way back from the peak without ever dropping below the
+    # threshold: the hand was already moving when logging began. There is no
+    # onset in this data. Returning 0 here reported RT = 0 s on the 8 Oct pilot.
+    return None
 
 
 def transport_window(sp, lo, hi, frac):
@@ -356,7 +363,7 @@ NEW_COLS = [
     "reach_time_corrected_s", "hand_speed_at_grasp_mps", "peak_speed_mps",
     "time_after_peak_pct", "speed_peaks", "path_ratio", "normalised_jerk",
     "transport_time_s",
-    "rt_speed_criterion_s", "samples_in_reach",
+    "rt_speed_criterion_s", "speed_at_cue_mps", "samples_in_reach",
 ]
 
 
@@ -490,8 +497,26 @@ def analyse(grasps, frames, window, onset_frac, cutoff_hz, transport_frac):
             row["rt_speed_criterion_s"] = f"{s[lo][0]:.4f}"
 
         row["hand_speed_at_grasp_mps"] = f"{sp[mark_i]:.4f}"
-        row["samples_in_reach"] = str(max(0, end_i - lo + 1))
-        row["reach_time_corrected_s"] = f"{s[end_i][0] - s[lo][0]:.4f}"
+
+        # How fast the hand was at the FIRST logged sample of the trial. Logging
+        # starts at cue onset, so anything well above tracking noise means the
+        # hand was already moving when the cue appeared - the trial anticipated
+        # the go signal. Worth having as a column because such a trial can still
+        # produce a plausible-looking RT: if the hand dips below threshold after
+        # the cue the search locks onto that dip and measures a second movement
+        # rather than the response. On the pilot, trial 21 read 394 mm/s here and
+        # still reported a perfectly ordinary 416 ms.
+        if gn == "1":
+            row["speed_at_cue_mps"] = f"{sp[0]:.4f}"
+
+        # For GRASP 1 an unfound onset means there is no defined start, so these
+        # stay blank rather than silently measuring from the cue. For grasps 2
+        # and 3 it means something different and harmless: onset could not be
+        # placed inside the interval, so the reach is measured from the previous
+        # grasp, which is where it does in fact begin. Only grasp 1 loses them.
+        if rel is not None or gn != "1":
+            row["samples_in_reach"] = str(max(0, end_i - lo + 1))
+            row["reach_time_corrected_s"] = f"{s[end_i][0] - s[lo][0]:.4f}"
 
         # Movement quality is measured over the TRANSPORT window, not the whole
         # inter-grasp interval, for the reason in transport_window().
@@ -936,6 +961,15 @@ def main():
     print(f"    movement time        {med(col('movement_time_s', trials)):6.3f} s")
     print(f"    reach time per grasp {med(col('reach_time_corrected_s')):6.3f} s")
     print(f"    transport per reach  {med(col('transport_time_s')):6.3f} s   (the movement itself)")
+
+    no_rt = [r for r in trials if not (r.get("rt_speed_criterion_s") or "").strip()]
+    early = [r for r in rec if (r.get("grasp_in_trial") or "").strip() == "1"
+             and (num(r, "speed_at_cue_mps") or 0.0) > 0.10]
+    if no_rt or early:
+        print(f"    --")
+        print(f"    no RT                {len(no_rt):6d}      trials: hand already moving when logging began")
+        print(f"    moving at the cue    {len(early):6d}      trials >100 mm/s at the first sample - "
+              f"anticipation. RT is suspect on these even where a number was produced.")
 
     print(f"\n  ENDPOINT   <- analyse lateral, not the others")
     print(f"    lateral error        {med(col('lateral_error_m')) * 100:6.2f} cm   THE AIM")
