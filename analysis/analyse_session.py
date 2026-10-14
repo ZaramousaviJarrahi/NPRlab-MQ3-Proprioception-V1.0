@@ -11,6 +11,8 @@ It writes three files next to the per-grasp file and prints a summary:
     ..._grasps.csv    every original column, plus the derived per-grasp measures
     ..._trials.csv    one row per trial: total trial time, RT, MT, errors
     ..._accuracy.csv  CE, VE and RE per target position and block
+    ..._vicon_precision.csv   RFIN endpoint precision per target, inside the Vicon
+                              frame - written only when --vicon is supplied
 
 Nothing to install. Standard library only, so it runs on any Mac or PC with
 Python 3 already on it.
@@ -669,8 +671,70 @@ def accuracy_table(rows):
 # that holds. It is re-estimated per session rather than carried across.
 # ============================================================================
 
+def vicon_precision_table(rows, min_n=10):
+    """
+    Endpoint PRECISION from Vicon RFIN: the spread of the reach endpoint across
+    repeated reaches to the same target, computed entirely inside Vicon's own
+    coordinate frame.
+
+    This is the study plan's independent validation of precision. It does not
+    depend on Quest hand tracking and it needs no spatial alignment between the
+    two systems - only the temporal alignment that add_vicon() has already done,
+    which is what says which reach went to which target.
+
+    Reported per (block, target position), because bias and spread both vary with
+    target position and pooling across positions would mix a position effect into
+    whatever else is being compared.
+
+    VE is the 3D variable error: RMS distance from the participant's own mean
+    endpoint for that target. A constant marker offset does not change it, which
+    is why precision survives the RFIN offset that makes accuracy unusable.
+
+    `enough_for_VE` follows the plan's rule that VE needs at least 10 observations
+    in a cell. Below that the spread about the mean is unstable and can read as
+    falsely high precision, so the flag is carried in the file rather than left to
+    be remembered.
+    """
+    cells = defaultdict(list)
+    for r in rows:
+        if (r.get("grasp_outcome") or "").strip() != "recorded":
+            continue
+        pos = (r.get("target_position_number") or "").strip()
+        x = num(r, "vicon_endpoint_x_m")
+        y = num(r, "vicon_endpoint_y_m")
+        z = num(r, "vicon_endpoint_z_m")
+        if not pos or x is None or y is None or z is None:
+            continue
+        cells[(r.get("block", ""), r.get("task", ""), pos)].append((x, y, z))
+
+    out = []
+    for (block, task, pos), pts in sorted(cells.items(),
+                                          key=lambda kv: (kv[0][0], kv[0][1], int(kv[0][2]))):
+        if len(pts) < 2:
+            continue
+        mx = st.mean([p[0] for p in pts])
+        my = st.mean([p[1] for p in pts])
+        mz = st.mean([p[2] for p in pts])
+        ve = math.sqrt(st.mean([(p[0] - mx) ** 2 + (p[1] - my) ** 2 + (p[2] - mz) ** 2
+                                for p in pts]))
+        sdx = st.stdev([p[0] for p in pts]) if len(pts) > 1 else float("nan")
+        sdy = st.stdev([p[1] for p in pts]) if len(pts) > 1 else float("nan")
+        sdz = st.stdev([p[2] for p in pts]) if len(pts) > 1 else float("nan")
+        out.append({
+            "block": block, "task": task, "target_position_number": pos,
+            "n": str(len(pts)),
+            "enough_for_VE": "yes" if len(pts) >= min_n else f"NO - needs {min_n}",
+            "vicon_VE_mm": f"{ve * 1000.0:.2f}",
+            "sd_x_mm": f"{sdx * 1000.0:.2f}", "sd_y_mm": f"{sdy * 1000.0:.2f}",
+            "sd_z_mm": f"{sdz * 1000.0:.2f}",
+            "mean_x_m": f"{mx:.4f}", "mean_y_m": f"{my:.4f}", "mean_z_m": f"{mz:.4f}",
+        })
+    return out
+
+
 VICON_COLS = ["vicon_peak_speed_mps", "vicon_path_ratio", "vicon_speed_peaks",
-              "vicon_normalised_jerk", "vicon_transport_time_s"]
+              "vicon_normalised_jerk", "vicon_transport_time_s",
+              "vicon_endpoint_x_m", "vicon_endpoint_y_m", "vicon_endpoint_z_m"]
 
 
 def read_vicon_rfin(path):
@@ -861,6 +925,17 @@ def add_vicon(rows, frames, vicon_path, cutoff_hz, transport_frac):
         nj = normalised_jerk(samples, a, b)
         if nj is not None:
             row["vicon_normalised_jerk"] = f"{nj:.2f}"
+
+        # Where RFIN ended this reach, in Vicon's own frame. read_vicon_rfin()
+        # converts the export's millimetres to metres, so these are METRES, matching
+        # every other distance in this file. This is what the
+        # precision table below is built from: the scatter of this point across
+        # repeated reaches to the SAME target. It needs no coordinate alignment with
+        # the headset, because every term is in the Vicon frame.
+        ex, ey, ez = samples[b][1:4]
+        row["vicon_endpoint_x_m"] = f"{ex:.5f}"
+        row["vicon_endpoint_y_m"] = f"{ey:.5f}"
+        row["vicon_endpoint_z_m"] = f"{ez:.5f}"
         done += 1
 
     pct = 100.0 * done / max(1, sum(1 for r in rows if (r.get("grasp_outcome") or "").strip() == "recorded"))
@@ -936,6 +1011,10 @@ def main():
     write(stem + "_trials.csv", trials, list(trials[0].keys()) if trials else [])
     write(stem + "_accuracy.csv", acc, list(acc[0].keys()) if acc else [])
 
+    vprec = vicon_precision_table(rows) if args.vicon else []
+    if vprec:
+        write(stem + "_vicon_precision.csv", vprec, list(vprec[0].keys()))
+
     # ------------------------------------------------------------------ summary
     def col(name, src=rows):
         return [v for v in (num(r, name) for r in src) if v is not None]
@@ -1005,7 +1084,10 @@ def main():
                   f"(Quest: {med(col('speed_peaks')):.1f})")
 
     print(f"\n  WROTE")
-    for suffix in ("_grasps.csv", "_trials.csv", "_accuracy.csv"):
+    _written = ["_grasps.csv", "_trials.csv", "_accuracy.csv"]
+    if vprec:
+        _written.append("_vicon_precision.csv")
+    for suffix in _written:
         print(f"    {os.path.basename(stem + suffix)}")
     print()
 
