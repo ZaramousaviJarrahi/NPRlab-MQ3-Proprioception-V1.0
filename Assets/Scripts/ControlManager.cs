@@ -314,9 +314,16 @@ public class ControlManager : NetworkBehaviour
                 {
                     _closestTarget = _rightClosestTarget;
                 }
-                if (_closestTarget != _previousClosestTarget)
+                // _previousClosestTarget is _closestTarget as it was on entry, and that is null
+                // on the first frame a target comes into range after the field was cleared -
+                // at the start of every trial, and again whenever DestroyThisTarget() or the
+                // empty-range branch below sets it to null. Dereferencing it then threw a
+                // NullReferenceException out of Update(), which skipped RenderClosestTargetAim()
+                // and UpdateDebugSphereLineRenderer() for that frame. Seen three times in the
+                // 13 Oct device log, each one immediately after the nine targets were spawned.
+                if (_closestTarget != _previousClosestTarget && _previousClosestTarget != null)
                 {
-                    if (_previousClosestTarget.transform.TryGetComponent(out LineRenderer lineRenderer))
+                    if (_previousClosestTarget.TryGetComponent(out LineRenderer lineRenderer))
                     {
                         Destroy(lineRenderer);
                     }
