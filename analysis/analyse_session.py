@@ -13,6 +13,8 @@ It writes three files next to the per-grasp file and prints a summary:
     ..._accuracy.csv  CE, VE and RE per target position and block
     ..._vicon_precision.csv   RFIN endpoint precision per target, inside the Vicon
                               frame - written only when --vicon is supplied
+    ..._vicon_trajectory.csv  RFIN path variability per target, whole reach and
+                              final 25% - written only when --vicon is supplied
 
 Nothing to install. Standard library only, so it runs on any Mac or PC with
 Python 3 already on it.
@@ -732,8 +734,76 @@ def vicon_precision_table(rows, min_n=10):
     return out
 
 
+def trajectory_variability_table(trajectories, n_points=101, min_n=10):
+    """
+    Spatial variability of the movement PATH across repeated reaches to the same
+    target, from Vicon RFIN.
+
+    Precision asks whether the hand ends in the same place. This asks whether it
+    gets there the same way - a different question, and the one that should move
+    first if removing sight of the hand forces online correction.
+
+    Each reach is resampled to `n_points` by normalised path distance rather than
+    by time, so reaches of different duration are compared position for position
+    along the path instead of instant for instant. The across-reach SD is taken at
+    each point and reported two ways:
+
+      mean_sd_mm      averaged over the whole reach
+      terminal_sd_mm  averaged over the final 25%, where endpoint corrections live
+
+    The terminal figure is the more sensitive of the two for Visit 3: a hand that
+    cannot be seen is corrected late, not early.
+
+    Like the precision table this lives entirely in Vicon's frame and is grouped by
+    target position, never pooled across positions.
+    """
+    out = []
+    for (block, task, pos), paths in sorted(trajectories.items(),
+                                            key=lambda kv: (kv[0][0], kv[0][1], int(kv[0][2]))):
+        resampled = []
+        for path in paths:
+            if len(path) < 3:
+                continue
+            d = [0.0]
+            for i in range(1, len(path)):
+                d.append(d[-1] + math.dist(path[i - 1], path[i]))
+            if d[-1] <= 1e-9:
+                continue
+            u = [x / d[-1] for x in d]
+            grid = [i / (n_points - 1) for i in range(n_points)]
+            cols = []
+            for axis in range(3):
+                vals, j = [], 0
+                for g in grid:
+                    while j < len(u) - 2 and u[j + 1] < g:
+                        j += 1
+                    span = u[j + 1] - u[j]
+                    f = 0.0 if span <= 0 else (g - u[j]) / span
+                    vals.append(path[j][axis] + f * (path[j + 1][axis] - path[j][axis]))
+                cols.append(vals)
+            resampled.append(list(zip(*cols)))
+        if len(resampled) < 2:
+            continue
+
+        pointwise = []
+        for i in range(n_points):
+            sds = [st.stdev([r[i][axis] for r in resampled]) for axis in range(3)]
+            pointwise.append(math.sqrt(sum(v * v for v in sds)))
+        tail = pointwise[int(0.75 * n_points):]
+        out.append({
+            "block": block, "task": task, "target_position_number": pos,
+            "n_reaches": str(len(resampled)),
+            "enough_for_report": "yes" if len(resampled) >= min_n else f"NO - needs {min_n}",
+            "mean_sd_mm": f"{1000.0 * st.mean(pointwise):.2f}",
+            "terminal_sd_mm": f"{1000.0 * st.mean(tail):.2f}",
+            "max_sd_mm": f"{1000.0 * max(pointwise):.2f}",
+        })
+    return out
+
+
 VICON_COLS = ["vicon_peak_speed_mps", "vicon_path_ratio", "vicon_speed_peaks",
               "vicon_normalised_jerk", "vicon_transport_time_s",
+              "vicon_time_after_peak_pct",
               "vicon_endpoint_x_m", "vicon_endpoint_y_m", "vicon_endpoint_z_m"]
 
 
@@ -847,18 +917,25 @@ def estimate_lag(vt, vp, rate, frames):
 
 
 def add_vicon(rows, frames, vicon_path, cutoff_hz, transport_frac):
-    """Label Vicon frames by trial and grasp, and derive the same measures from RFIN."""
+    """Label Vicon frames by trial and grasp, and derive the same measures from RFIN.
+
+    Returns (rows, lag, z, note, trajectories), where trajectories maps
+    (block, task, target position) -> list of reach paths, each a list of (x, y, z)
+    in metres. Collected here rather than recomputed later because this is the only
+    place that knows which Vicon samples belong to which reach.
+    """
+    traj = defaultdict(list)
     got = read_vicon_rfin(vicon_path)
     if got is None:
-        return rows, None, 0.0, "no usable Trajectories/RFIN section in that file"
+        return rows, None, 0.0, "no usable Trajectories/RFIN section in that file", {}
     vt, vp, rate = got
 
     try:
         lag, z = estimate_lag(vt, vp, rate, frames)
     except ImportError:
-        return rows, None, 0.0, "numpy is needed for Vicon alignment (pip3 install numpy)"
+        return rows, None, 0.0, "numpy is needed for Vicon alignment (pip3 install numpy)", {}
     if lag is None:
-        return rows, None, 0.0, "not enough overlapping movement to align"
+        return rows, None, 0.0, "not enough overlapping movement to align", {}
 
     t0 = min(float(r["t_session_s"]) for r in frames)
     samples = [(vt[i], vp[i][0], vp[i][1], vp[i][2]) for i in range(len(vt))]
@@ -916,6 +993,23 @@ def add_vicon(rows, frames, vicon_path, cutoff_hz, transport_frac):
         if not seg:
             continue
         row["vicon_peak_speed_mps"] = f"{max(seg):.4f}"
+
+        # Time after peak velocity, the deceleration phase as a percentage of the
+        # transport phase. Same arithmetic as the Quest column above, on Vicon's
+        # trace. This is the version to report: the measure depends on locating the
+        # speed peak, and Quest tracking noise splits a single reach into several
+        # apparent peaks - on this session the Quest saw a median of 3 per reach
+        # where Vicon saw 1 - so the peak it finds is often not the real one.
+        pos_key = (row.get("block", ""), row.get("task", ""),
+                   (row.get("target_position_number") or "").strip())
+        if pos_key[2]:
+            traj[pos_key].append([tuple(samples[i][1:4]) for i in range(a, b + 1)])
+
+        pk_i = a + seg.index(max(seg))
+        span = samples[b][0] - samples[a][0]
+        if span > 0:
+            row["vicon_time_after_peak_pct"] = (
+                f"{100.0 * (samples[b][0] - samples[pk_i][0]) / span:.1f}")
         row["vicon_speed_peaks"] = str(count_speed_peaks(sp, a, b))
         row["vicon_transport_time_s"] = f"{samples[b][0] - samples[a][0]:.4f}"
         straight = math.dist(samples[a][1:4], samples[b][1:4])
@@ -939,7 +1033,9 @@ def add_vicon(rows, frames, vicon_path, cutoff_hz, transport_frac):
         done += 1
 
     pct = 100.0 * done / max(1, sum(1 for r in rows if (r.get("grasp_outcome") or "").strip() == "recorded"))
-    return rows, lag, z, f"{done} grasps labelled ({pct:.0f}% of the session covered by this export)"
+    return (rows, lag, z,
+            f"{done} grasps labelled ({pct:.0f}% of the session covered by this export)",
+            dict(traj))
 
 
 def write(path, rows, fieldnames):
@@ -991,8 +1087,9 @@ def main():
 
     vicon_lag = vicon_z = None
     vicon_note = ""
+    vicon_traj = {}
     if args.vicon:
-        rows, vicon_lag, vicon_z, vicon_note = add_vicon(
+        rows, vicon_lag, vicon_z, vicon_note, vicon_traj = add_vicon(
             rows, frames, args.vicon, args.cutoff_hz, args.transport_frac)
 
     stem = args.grasp_csv.rsplit(".", 1)[0]
@@ -1014,6 +1111,10 @@ def main():
     vprec = vicon_precision_table(rows) if args.vicon else []
     if vprec:
         write(stem + "_vicon_precision.csv", vprec, list(vprec[0].keys()))
+
+    vtraj = trajectory_variability_table(vicon_traj) if vicon_traj else []
+    if vtraj:
+        write(stem + "_vicon_trajectory.csv", vtraj, list(vtraj[0].keys()))
 
     # ------------------------------------------------------------------ summary
     def col(name, src=rows):
@@ -1087,6 +1188,8 @@ def main():
     _written = ["_grasps.csv", "_trials.csv", "_accuracy.csv"]
     if vprec:
         _written.append("_vicon_precision.csv")
+    if vtraj:
+        _written.append("_vicon_trajectory.csv")
     for suffix in _written:
         print(f"    {os.path.basename(stem + suffix)}")
     print()
