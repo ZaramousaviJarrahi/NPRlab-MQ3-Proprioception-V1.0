@@ -144,10 +144,21 @@ public class SessionRunner : MonoBehaviour
                             TrialCounter.BlockedTask.TaskB,
                             TrialCounter.BlockedTask.TaskC };
 
-        // Familiarization: cycle through the tasks so they meet all three.
+        // Familiarization runs its OWN sequence, not the trained tasks.
+        //
+        // It used to cycle A, B, C, A, B, C - which gave every participant two trials of each
+        // experimental task before the practice-schedule manipulation began. Shea & Morgan's
+        // pretest was deliberately a different task for exactly that reason. The sequence is
+        // in TaskSequencer.familiarization and is two grasps rather than three, so nothing
+        // about it transfers to a trained sequence.
+        //
+        // Side effect worth knowing: with one task instead of three, the foreperiod balance
+        // over the familiarization block is now a single (block, task) cell of 6 trials over
+        // 3 lengths, which comes out exactly 2/2/2. The old 2-trials-per-task arrangement
+        // could not come out level by construction.
         for (int i = 0; i < familiarizationTrials; i++)
         {
-            _order.Add(tasks[i % 3]);
+            _order.Add(TrialCounter.BlockedTask.Familiarization);
             _blockOf.Add("Familiarization");
         }
 
@@ -972,7 +983,7 @@ public class SessionRunner : MonoBehaviour
                 // Open the frame window HERE, not at the cue: a reaction that began before
                 // the go signal is only visible if the trace covers the foreperiod.
                 if (_frameLog == null) _frameLog = GetComponent<FingertipFrameLogger>();
-                if (_frameLog != null) _frameLog.OnWarningTone(trialNumber);
+                if (_frameLog != null) _frameLog.OnWarningTone(trialIndex + 1);
 
                 float foreperiodEnds = Time.time + fp;
                 bool homeLost = false;
@@ -1014,7 +1025,7 @@ public class SessionRunner : MonoBehaviour
 
             if (_cues != null) _cues.Warning();
             if (_frameLog == null) _frameLog = GetComponent<FingertipFrameLogger>();
-            if (_frameLog != null) _frameLog.OnWarningTone(trialNumber);
+            if (_frameLog != null) _frameLog.OnWarningTone(trialIndex + 1);
             yield return new WaitForSeconds(fp);
         }
 

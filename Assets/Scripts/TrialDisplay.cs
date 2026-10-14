@@ -57,6 +57,19 @@ public class TrialDisplay : MonoBehaviour
     [Tooltip("Height of the whole 3x3 diagram, in metres.")]
     public float panelHeightMetres = 0.13f;
 
+    [Tooltip("Show the task letter (A, B, C, or D/E for the transfer tasks) beside the middle " +
+             "row of the diagram. This is the second cue channel: it says WHICH task, where the " +
+             "diagram says WHAT PATTERN. It appears at cue onset with the panel and never " +
+             "before. If per-task fruit is adopted instead, turn this off - only one channel " +
+             "should carry task identity.")]
+    public bool showTaskLetter = true;
+
+    [Tooltip("How far to the right of the diagram's centre the task letter sits, in metres.")]
+    public float taskLetterSideways = 0.11f;
+
+    [Tooltip("Height of the task letter, in metres.")]
+    public float taskLetterHeightMetres = 0.05f;
+
     [Header("Digits on targets (piloting only)")]
     [Tooltip("Height of each digit, in metres.")]
     public float digitHeightMetres = 0.05f;
@@ -70,6 +83,7 @@ public class TrialDisplay : MonoBehaviour
     private TaskSequencer _sequencer;
     private readonly List<TextMeshPro> _digits = new List<TextMeshPro>();
     private TextMeshPro _panel;
+    private TextMeshPro _taskLetter;
     private int _lastTrialsStarted = -1;
     private string _lastSequence = null;
     private Mode _lastMode;
@@ -140,6 +154,23 @@ public class TrialDisplay : MonoBehaviour
         ScaleToMetres(_panel, panelHeightMetres);
         _panel.transform.position = anchor;
         _panel.transform.rotation = Quaternion.LookRotation(forward, up);
+
+        // The task letter is its OWN label, not part of the diagram string.
+        //
+        // Appending it to the middle row made that line wider than the other two, and
+        // TextMeshPro centres each line independently - so the middle row shifted sideways
+        // and the 3x3 stopped reading as a square. A separate object leaves DiagramText
+        // byte-for-byte what it was and positions the letter in world space instead.
+        if (showTaskLetter && _sequencer != null)
+        {
+            if (_taskLetter == null) _taskLetter = MakeLabel("TaskLetter");
+            _taskLetter.gameObject.SetActive(true);
+            _taskLetter.text  = _sequencer.CurrentTaskLetter();
+            _taskLetter.color = inkColour;
+            ScaleToMetres(_taskLetter, taskLetterHeightMetres);
+            _taskLetter.transform.position = anchor + right * taskLetterSideways;
+            _taskLetter.transform.rotation = Quaternion.LookRotation(forward, up);
+        }
 
         Debug.Log($"TrialDisplay: cue panel showing the pattern for {string.Join("-", positions)} "
                 + "(participant maps it onto the grid).");
@@ -219,6 +250,7 @@ public class TrialDisplay : MonoBehaviour
     private void HideAll()
     {
         if (_panel != null) _panel.gameObject.SetActive(false);
+        if (_taskLetter != null) _taskLetter.gameObject.SetActive(false);
         foreach (TextMeshPro d in _digits) if (d != null) d.gameObject.SetActive(false);
     }
 }

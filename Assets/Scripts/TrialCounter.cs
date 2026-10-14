@@ -13,7 +13,11 @@ public class TrialCounter : MonoBehaviour
     // transfer tasks and are never practised. New values go on the END - Unity stores an
     // enum in a scene by its NUMBER, so inserting one in the middle would silently change
     // what every saved reference means.
-    public enum BlockedTask { TaskA, TaskB, TaskC, Transfer3, Transfer5 }
+    // Familiarization is a task in its own right, not one of the trained three. Shea & Morgan's
+    // pretest was deliberately NOT one of the acquisition tasks; practising A, B and C before the
+    // schedule manipulation begins gives both groups experience of the experimental tasks first.
+    // Appended at the END, per the rule above.
+    public enum BlockedTask { TaskA, TaskB, TaskC, Transfer3, Transfer5, Familiarization }
 
     [Header("Condition Setup (set this before each session)")]
     public PracticeSchedule practiceSchedule = PracticeSchedule.Blocked;
@@ -180,7 +184,7 @@ public class TrialCounter : MonoBehaviour
         }
 
         // Drawn below the "Start Experiment" (y=10) and "Hide/Show Hands" (y=70) buttons.
-        // CapturesRequired(), so a five-target trial reads "x/5" and not "x/3".
+        // CapturesRequired(), so a five-target trial reads "x/5" and not "x/3".
         label += $"   [grasps this trial: {_captureCountInCurrentTrial}/{CapturesRequired()}]";
         GUI.Label(new Rect(10, 130, 500, 30), label);
 

@@ -1436,6 +1436,7 @@ GameObject:
   - component: {fileID: 365879019}
   - component: {fileID: 365879021}
   - component: {fileID: 365879020}
+  - component: {fileID: 365879022}
   m_Layer: 0
   m_Name: ControlManager
   m_TagString: Untagged
@@ -1711,6 +1712,7 @@ MonoBehaviour:
   taskC: 8,3,4
   transfer3: 6,1,8
   transfer5: 1,3,7,9,5
+  familiarization: 7,3
   showAllNineObjects: 1
   currentSequence: 
   trialsStarted: 0
@@ -1790,6 +1792,7 @@ MonoBehaviour:
   - 1
   - 3
   - 5
+  foreperiodJitterSeconds: 0.5
   homeDwellSeconds: 0.4
   restartForeperiodIfHomeLost: 1
   maxForeperiodRestarts: 3
@@ -1870,6 +1873,9 @@ MonoBehaviour:
   panelAboveGrid: 0.2
   panelSideways: 0
   panelHeightMetres: 0.13
+  showTaskLetter: 1
+  taskLetterSideways: 0.11
+  taskLetterHeightMetres: 0.05
   digitHeightMetres: 0.05
   digitForwardOffset: 0.055
   inkColour: {r: 1, g: 1, b: 1, a: 1}
@@ -2038,6 +2044,25 @@ AudioSource:
     m_PreInfinity: 2
     m_PostInfinity: 2
     m_RotationOrder: 4
+--- !u!114 &365879022
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 365878999}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: c4930b9358acb45049e6df4f47bdbbb1, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  recordFrames: 1
+  secondsAfterLastGrasp: 1
+  maxTrialSeconds: 120
+  preCueBudgetSeconds: 10
+  framesWritten: 0
+  trialsLogged: 0
+  currentFilePath: 
 --- !u!114 &377332078
 MonoBehaviour:
   m_ObjectHideFlags: 0

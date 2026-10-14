@@ -244,7 +244,15 @@ public class FingertipFrameLogger : MonoBehaviour
         // so the trace starts at the go signal with a position already attached rather than
         // at whatever the next frame happens to be.
         _graspPending = false;
-        _pendingTargetIndex = -2;   // -2 marks 'cue', distinct from -1 'unknown target'
+
+        // -2 marks 'cue', -3 marks 'warning', both distinct from -1 'unknown target'.
+        //
+        // The row opened at the warning tone used to be written as 'cue' as well, so every
+        // trial carried two rows labelled 'cue', separated by that trial's foreperiod. Taking
+        // the first of them as the go signal puts the entire foreperiod - between 0.7 s and
+        // 5.4 s in the 13 Oct session - inside reaction time, with nothing in the file to show
+        // it had happened. The two moments are now named differently.
+        _pendingTargetIndex = cueKnown ? -2 : -3;
     }
 
     /// <summary>
@@ -314,6 +322,15 @@ public class FingertipFrameLogger : MonoBehaviour
         if (_pendingTargetIndex == -2)
         {
             ev = "cue";
+            _pendingTargetIndex = -1;
+        }
+        else if (_pendingTargetIndex == -3)
+        {
+            // The warning tone, which is where the window opens. t_since_cue_s on this row and
+            // on every row up to the cue is measured from here, not from the go signal, because
+            // the cue time is not known yet when they are written. Analysis takes the 'cue'
+            // row as t = 0 and works from t_session_s, which is absolute.
+            ev = "warning";
             _pendingTargetIndex = -1;
         }
         else if (_graspPending)

@@ -97,6 +97,17 @@ public class TaskSequencer : MonoBehaviour
              "which would favour whichever group chunks better.")]
     public string transfer5 = "1,3,7,9,5";
 
+    [Tooltip("The familiarization sequence. TWO grasps, 7 -> 3, and deliberately not one of " +
+             "the trained tasks: Shea & Morgan's pretest was a separate two-element task for " +
+             "the same reason. It also cannot be drawn from the matched family - A, B, C and " +
+             "transfer3 use all four matched paths, so the only matched sequences left are " +
+             "those four REVERSED, and a reversed trained sequence is exactly what produced " +
+             "the 19-of-20 backwards-Task-B error in pilot testing. Familiarization is excluded " +
+             "from analysis, so it does not need to be matched on distance or turn angle; it " +
+             "needs to teach the display and how a grasp registers without teaching any " +
+             "sequence that is about to be tested.")]
+    public string familiarization = "7,3";
+
     [Header("What appears")]
     [Tooltip("ON = all nine objects visible, participant grasps the instructed order " +
              "(the study plan's design). OFF = only the three targets of the sequence appear.")]
@@ -130,7 +141,33 @@ public class TaskSequencer : MonoBehaviour
             case TrialCounter.BlockedTask.TaskC:     return taskC;
             case TrialCounter.BlockedTask.Transfer3: return transfer3;
             case TrialCounter.BlockedTask.Transfer5: return transfer5;
+            case TrialCounter.BlockedTask.Familiarization: return familiarization;
             default:                                 return taskA;
+        }
+    }
+
+    // The letter identifying the current task, for display beside the cue panel.
+    //
+    // This is the second cue channel. Shea & Morgan ran two: a coloured light that said WHICH
+    // task, and a diagram that said WHAT PATTERN. The panel alone supplies only the second, so
+    // task identification - which is part of reaction time, and where their largest effect sat -
+    // had no channel of its own. The letter restores it.
+    //
+    // The transfer tasks get D and E rather than reusing A, B or C, because they are novel
+    // tasks and a participant who has practised "A" must not be shown "A" for a different
+    // sequence.
+    public string CurrentTaskLetter()
+    {
+        var task = _trialCounter != null ? _trialCounter.currentTask
+                                         : TrialCounter.BlockedTask.TaskA;
+        switch (task)
+        {
+            case TrialCounter.BlockedTask.TaskB:     return "B";
+            case TrialCounter.BlockedTask.TaskC:     return "C";
+            case TrialCounter.BlockedTask.Transfer3: return "D";
+            case TrialCounter.BlockedTask.Transfer5: return "E";
+            case TrialCounter.BlockedTask.Familiarization: return "F";
+            default:                                 return "A";
         }
     }
 
