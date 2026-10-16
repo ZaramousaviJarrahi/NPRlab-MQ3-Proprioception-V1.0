@@ -362,7 +362,8 @@ def normalised_jerk(s, lo, hi):
 # ----------------------------------------------------------------------- the work
 
 NEW_COLS = [
-    "endpoint_error_corrected_m", "depth_offset_m", "lateral_error_m",
+    "endpoint_error_corrected_m", "endpoint_outcome",
+    "depth_offset_m", "lateral_error_m",
     "endpoint_settle_s", "endpoint_improvement_m",
     "reach_time_corrected_s", "hand_speed_at_grasp_mps", "peak_speed_mps",
     "time_after_peak_pct", "speed_peaks", "path_ratio", "normalised_jerk",
@@ -371,7 +372,8 @@ NEW_COLS = [
 ]
 
 
-def analyse(grasps, frames, window, onset_frac, cutoff_hz, transport_frac):
+def analyse(grasps, frames, window, onset_frac, cutoff_hz, transport_frac,
+            max_endpoint_error=0.10):
     by_trial = defaultdict(list)
     for fr in frames:
         key = ((fr.get("trial_number") or "").strip(),
@@ -468,6 +470,51 @@ def analyse(grasps, frames, window, onset_frac, cutoff_hz, transport_frac):
                 perp = tuple(e - depth * a for e, a in zip(err, ax))
                 row["depth_offset_m"] = f"{depth:.5f}"
                 row["lateral_error_m"] = f"{math.sqrt(sum(c * c for c in perp)):.5f}"
+
+            # --- validity threshold on the endpoint -----------------------------
+            #
+            # A grasp can register with the fingertip nowhere near the target. Two
+            # such grasps appeared in the first 300 collected (15 Oct 2026): 41.2 cm
+            # on Visit 1 trial 40, 32.8 cm on Visit 2 trial 1. Both were saved as
+            # ordinary valid grasps, and each one on its own moved its cell's VE by
+            # an order of magnitude - position 3 read 93 mm where the other
+            # seventeen reaches to it gave 15 mm.
+            #
+            # The cut is at half the MINIMUM inter-target spacing: the grid is
+            # 250 mm between columns and 200 mm between rows, so beyond 100 mm the
+            # fingertip may be nearer a different target than the intended one and
+            # the measurement is no longer interpretable. That is a geometric
+            # argument rather than a percentile, which is what makes it
+            # preregisterable.
+            #
+            # The data does not constrain the choice tightly: across those 300
+            # grasps the largest valid endpoint error was 60 mm and the smallest
+            # failure 328 mm, so any cut between 80 and 250 mm flags exactly the
+            # same two. Insensitivity over a 3x range is the point - this is a
+            # boundary, not a tuned parameter.
+            #
+            # WHAT IS AND IS NOT DISCARDED. Only the endpoint. depth_offset_m and
+            # lateral_error_m are blanked, which removes the grasp from
+            # accuracy_table() and from the per-trial means automatically, since
+            # both already skip rows where those are absent. Everything else
+            # survives: the trial keeps its total time, reaction time, movement
+            # time and order-error status, none of which depend on where the grasp
+            # registered. On Visit 1 trial 40 the reach itself was entirely normal
+            # - 0.46 m displacement, ordinary speed profile - and only the
+            # registration was wrong, so discarding the trial would throw away good
+            # timing data to fix an endpoint problem.
+            #
+            # The Vicon endpoint columns are also left alone, for the same reason:
+            # a Quest registration failure says nothing about where RFIN was.
+            #
+            # endpoint_error_corrected_m is KEPT so the size of the failure stays
+            # visible in the file rather than vanishing into a blank.
+            if max_endpoint_error and best_d > max_endpoint_error:
+                row["endpoint_outcome"] = "out_of_range"
+                row["depth_offset_m"] = ""
+                row["lateral_error_m"] = ""
+            else:
+                row["endpoint_outcome"] = "ok"
 
         end_i = best_i if best_i is not None else mark_i
 
@@ -1057,6 +1104,11 @@ def main():
                          "signal needed. Requires numpy.")
     ap.add_argument("--window", type=float, default=0.40,
                     help="seconds after the grab to search for closest approach (default 0.40)")
+    ap.add_argument("--max-endpoint-error", type=float, default=0.10,
+                    help="metres; a grasp whose closest approach is further than "
+                         "this from the target is marked out_of_range and dropped "
+                         "from the endpoint measures, keeping its timing (default "
+                         "0.10 = half the minimum inter-target spacing). 0 disables.")
     ap.add_argument("--onset-frac", type=float, default=0.05,
                     help="proportion of peak speed counting as movement onset (default 0.05)")
     ap.add_argument("--transport-frac", type=float, default=0.20,
@@ -1081,7 +1133,8 @@ def main():
         sys.exit("The frame file is empty.")
 
     rows, matched = analyse(grasps, frames, args.window, args.onset_frac,
-                            args.cutoff_hz, args.transport_frac)
+                            args.cutoff_hz, args.transport_frac,
+                            args.max_endpoint_error)
     trials = per_trial(rows)
     acc = accuracy_table(rows)
 
@@ -1152,6 +1205,17 @@ def main():
               f"anticipation. RT is suspect on these even where a number was produced.")
 
     print(f"\n  ENDPOINT   <- analyse lateral, not the others")
+    oor = [r for r in rec if (r.get("endpoint_outcome") or "").strip() == "out_of_range"]
+    if oor:
+        print(f"    OUT OF RANGE         {len(oor):6d}      grasps further than "
+              f"{args.max_endpoint_error * 100:.0f} cm from the target - dropped from")
+        print(f"                                     the endpoint measures, kept for timing:")
+        for r in sorted(oor, key=lambda r: -(num(r, 'endpoint_error_corrected_m') or 0))[:6]:
+            print(f"                                     trial {r.get('trial_number','?'):>3}"
+                  f" grasp {r.get('grasp_in_trial','?')}"
+                  f" position {r.get('target_position_number','?')}"
+                  f"  {(num(r, 'endpoint_error_corrected_m') or 0) * 100:.1f} cm")
+        print(f"    --")
     print(f"    lateral error        {med(col('lateral_error_m')) * 100:6.2f} cm   THE AIM")
     print(f"    depth offset         {med(col('depth_offset_m')) * 100:+6.2f} cm   interaction artefact")
     print(f"    radial (uncorrected) {med(col('endpoint_error_m')) * 100:6.2f} cm   contains both")
