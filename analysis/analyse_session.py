@@ -647,7 +647,7 @@ def per_trial(rows):
     return out
 
 
-def accuracy_table(rows):
+def accuracy_table(rows, min_n=10):
     """
     CE, VE and RE per target position within each block.
 
@@ -670,6 +670,14 @@ def accuracy_table(rows):
             continue
         cells[(r.get("block", ""), pos)].append((dep, lat))
 
+    # The plan reports VE only at 10 or more observations in a cell: below that
+    # the spread about the participant's own mean is unstable and can read as
+    # falsely HIGH precision. vicon_precision_table() already carries that flag;
+    # this table did not, so it printed a VE for n=3 with nothing to say it was
+    # not usable. Measured on Visit 2, 15 Oct 2026: not one of its 22 cells
+    # reached 10 - retention gives 3 to 6 per cell and transfer gives 9 - so
+    # every VE in that file was below the plan's own threshold and nothing said
+    # so.
     out = []
     for (block, pos), v in sorted(cells.items(), key=lambda kv: (kv[0][0], int(kv[0][1]))):
         if len(v) < 2:
@@ -682,6 +690,7 @@ def accuracy_table(rows):
         rms = math.sqrt(st.mean([a * a + b * b for a, b in v]))
         out.append({
             "block": block, "target_position_number": pos, "n": str(len(v)),
+            "enough_for_VE": "yes" if len(v) >= min_n else f"NO - needs {min_n}",
             "CE_m": f"{ce:.5f}", "VE_m": f"{ve:.5f}", "RE_m": f"{re:.5f}",
             "mean_depth_offset_m": f"{mdep:.5f}", "mean_lateral_error_m": f"{mlat:.5f}",
             "check_rms_vs_CE_VE": f"{rms:.5f} vs {math.hypot(ce, ve):.5f}",
@@ -756,6 +765,47 @@ def vicon_precision_table(rows, min_n=10):
             continue
         cells[(r.get("block", ""), r.get("task", ""), pos)].append((x, y, z))
 
+    # --- sanity: is each endpoint nearest its OWN target? --------------------
+    #
+    # A Vicon endpoint can land on the wrong reach. On 15 Oct 2026, Visit 2
+    # trial 29 (Transfer-5, position 3) produced an endpoint 45 cm from the
+    # other eight reaches to that target and nearest to position 7, while the
+    # Quest reported a perfectly ordinary grasp for the same reach. One such
+    # point took that cell's VE from about 15 mm to 160.49 mm.
+    #
+    # The test is the same idea as the Quest-side 10 cm rule, and equally
+    # non-circular: take each cell's ROBUST centre (the median, so one bad
+    # point cannot drag it), then ask which centre each endpoint is closest to.
+    # An endpoint nearer some other target than its own is not a measurement of
+    # the target it is filed under, whatever produced it.
+    #
+    # Flagged points are excluded from VE and listed in `excluded`, so the
+    # number is visible rather than silently absorbed. This does not explain the
+    # cause - it stops the symptom reaching a result.
+    def _median_point(pts):
+        return tuple(st.median([p[i] for p in pts]) for i in range(3))
+
+    centres = {k: _median_point(v) for k, v in cells.items() if len(v) >= 3}
+    excluded = defaultdict(int)
+    if len(centres) >= 2:
+        for key in list(cells):
+            own = centres.get(key)
+            if own is None:
+                continue
+            others = [c for k, c in centres.items()
+                      if k[2] != key[2] and k[0] == key[0]]   # same block, other targets
+            if not others:
+                continue
+            kept = []
+            for p in cells[key]:
+                d_own = math.dist(p, own)
+                if any(math.dist(p, o) < d_own for o in others):
+                    excluded[key] += 1
+                else:
+                    kept.append(p)
+            if kept:
+                cells[key] = kept
+
     out = []
     for (block, task, pos), pts in sorted(cells.items(),
                                           key=lambda kv: (kv[0][0], kv[0][1], int(kv[0][2]))):
@@ -772,6 +822,7 @@ def vicon_precision_table(rows, min_n=10):
         out.append({
             "block": block, "task": task, "target_position_number": pos,
             "n": str(len(pts)),
+            "excluded_wrong_target": str(excluded.get((block, task, pos), 0)),
             "enough_for_VE": "yes" if len(pts) >= min_n else f"NO - needs {min_n}",
             "vicon_VE_mm": f"{ve * 1000.0:.2f}",
             "sd_x_mm": f"{sdx * 1000.0:.2f}", "sd_y_mm": f"{sdy * 1000.0:.2f}",
@@ -851,7 +902,8 @@ def trajectory_variability_table(trajectories, n_points=101, min_n=10):
 VICON_COLS = ["vicon_peak_speed_mps", "vicon_path_ratio", "vicon_speed_peaks",
               "vicon_normalised_jerk", "vicon_transport_time_s",
               "vicon_time_after_peak_pct",
-              "vicon_endpoint_x_m", "vicon_endpoint_y_m", "vicon_endpoint_z_m"]
+              "vicon_endpoint_x_m", "vicon_endpoint_y_m", "vicon_endpoint_z_m",
+              "vicon_endpoint_lead_s"]
 
 
 def read_vicon_rfin(path):
@@ -963,7 +1015,7 @@ def estimate_lag(vt, vp, rate, frames):
     return lags[best] / rate, z
 
 
-def add_vicon(rows, frames, vicon_path, cutoff_hz, transport_frac):
+def add_vicon(rows, frames, vicon_path, cutoff_hz, transport_frac, endpoint_window=0.40):
     """Label Vicon frames by trial and grasp, and derive the same measures from RFIN.
 
     Returns (rows, lag, z, note, trajectories), where trajectories maps
@@ -1073,7 +1125,37 @@ def add_vicon(rows, frames, vicon_path, cutoff_hz, transport_frac):
         # precision table below is built from: the scatter of this point across
         # repeated reaches to the SAME target. It needs no coordinate alignment with
         # the headset, because every term is in the Vicon frame.
-        ex, ey, ez = samples[b][1:4]
+        # NOT samples[b]. The transport window ends at the first sample below 20%
+        # of peak speed, which on a clean reach is the target - but a reach
+        # containing a pause dips below that threshold MID-FLIGHT, and b then
+        # marks the pause rather than the arrival. Measured on Visit 2, 15 Oct
+        # 2026: 38% of endpoints landed more than 100 ms before their grasp, the
+        # worst by 1.16 s, and one of them fell nearer a different target.
+        #
+        # Arrival is the FIRST LOCAL speed minimum at or after the grasp. The hand
+        # is still moving when the grasp fires, decelerates into the target, then
+        # accelerates away - so the first time the speed stops falling is the
+        # moment it arrived. This mirrors the Quest side, which takes closest
+        # approach within --window seconds of the grab; closest approach cannot be
+        # computed here, because the target is known in Unity coordinates and this
+        # is the Vicon frame with no co-registration, but the first local minimum
+        # finds the same instant without needing one.
+        #
+        # It must be the FIRST local minimum, not the slowest sample in the
+        # interval: written the slow-sample way, it finds wherever the hand paused
+        # longest, which is the NEXT target whenever the hand dwells there before
+        # that grasp registers. That put three of Transfer-5's nine position-1
+        # endpoints onto position 3, half a metre out.
+        nxt = marks[key].get(str(int(gn) + 1))
+        i_next = at(nxt) if nxt is not None else None
+        limit = min(len(samples) - 1, i1 + int(endpoint_window * rate))
+        if i_next is not None:
+            limit = min(limit, i_next - 1)
+        e_i = i1
+        while e_i < limit and sp[e_i + 1] <= sp[e_i]:
+            e_i += 1
+        row["vicon_endpoint_lead_s"] = f"{(i1 - b) / rate:.3f}"
+        ex, ey, ez = samples[e_i][1:4]
         row["vicon_endpoint_x_m"] = f"{ex:.5f}"
         row["vicon_endpoint_y_m"] = f"{ey:.5f}"
         row["vicon_endpoint_z_m"] = f"{ez:.5f}"
@@ -1143,7 +1225,7 @@ def main():
     vicon_traj = {}
     if args.vicon:
         rows, vicon_lag, vicon_z, vicon_note, vicon_traj = add_vicon(
-            rows, frames, args.vicon, args.cutoff_hz, args.transport_frac)
+            rows, frames, args.vicon, args.cutoff_hz, args.transport_frac, args.window)
 
     stem = args.grasp_csv.rsplit(".", 1)[0]
 

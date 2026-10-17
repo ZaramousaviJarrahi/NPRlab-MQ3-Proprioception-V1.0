@@ -1776,7 +1776,7 @@ MonoBehaviour:
   avoidImmediateRepeats: 1
   randomSeed: 0
   retentionTrialsPerTask: 6
-  transferTrials: 9
+  transferTrials: 10
   retentionTrialsPerTaskPerOrder: 3
   retentionTestOrder: 0
   transferTaskOrder: 0
