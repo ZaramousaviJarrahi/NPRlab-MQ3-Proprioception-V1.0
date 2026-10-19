@@ -96,7 +96,26 @@ def hand_samples(frames, hand):
     """
     Usable samples for one hand, in order, de-duplicated by tracking timestamp.
 
-    Returns [(t_since_cue, x, y, z)].
+    Returns [(t_session, x, y, z)] - the SESSION clock, not t_since_cue_s.
+
+    This matters more than it looks. t_since_cue_s is zeroed at the warning tone
+    AND again at the cue, so within one trial it ramps up, drops back to zero,
+    and ramps again. It is not a clock, and used as one it breaks three things
+    that all read the time column:
+
+      - speeds() divides by the gap between samples. Across the reset that gap
+        is NEGATIVE, so speed at and either side of the cue came out as zero.
+      - smooth() takes the median gap to get the sampling rate.
+      - nearest_index() matches a timestamp against the column. With two ramps
+        there are two samples at (say) 1.9 s, and it could return the one in the
+        foreperiod instead of the one after the cue.
+
+    t_session_s is monotonic across the whole file, so all three behave. The one
+    thing that genuinely needs cue-relative time is the reported reaction time,
+    which subtracts the cue sample's own timestamp - see cue_sample_index().
+
+    Older frame logs without a t_session_s column fall back to t_since_cue_s and
+    inherit all of the above; re-export rather than relying on it.
 
     Two filters matter here. Frames where confidence is -1 are not tracked at all:
     the position is stale or zero and differencing across them invents a jump.
@@ -116,11 +135,64 @@ def hand_samples(frames, hand):
         if sample is not None and sample >= 0 and sample == last_sample:
             continue
         last_sample = sample
-        t, x, y, z = (num(fr, "t_since_cue_s"), num(fr, cx), num(fr, cy), num(fr, cz))
+        t = num(fr, "t_session_s")
+        if t is None:
+            t = num(fr, "t_since_cue_s")       # legacy logs only; see docstring
+        x, y, z = num(fr, cx), num(fr, cy), num(fr, cz)
         if None in (t, x, y, z):
             continue
         out.append((t, x, y, z))
     return out
+
+
+def cue_sample_index(tf, hand):
+    """
+    (index, timestamp) of the cue: the first hand sample at or after it, and the
+    cue event's own session time.
+
+    Both are needed. The index is where every "start of the trial" search has to
+    begin; the timestamp is what reaction time is measured from, and using the
+    sample's time instead would quantise RT to the 13.9 ms tracking interval and
+    bias it short by up to one sample.
+
+    This exists because t_since_cue_s is NOT time since the cue. The logger
+    zeroes it at the warning tone AND again at the cue, so every trial contains
+    two ramps from zero and the column cannot tell them apart. Anything that
+    looked up "the start of the trial" as sample 0 was therefore reading the
+    WARNING, which on P60 Visit 1 sat a median 2.5 s earlier - and right after
+    the participant had repositioned their hand at home, so it was still moving.
+
+    What that cost, measured on P60 Visit 1 (60 trials):
+      - speed_at_cue_mps read the warning. 24/60 trials looked like anticipation
+        (>100 mm/s). At the actual cue only 2/60 are above it, median 14 mm/s,
+        which is below the 32 mm/s tracking-noise floor. There was no
+        anticipation problem; there was a column measuring the wrong instant.
+      - the reach axis for grasp 1 started at the warning position, a median
+        21.5 mm away from where the hand actually was at the cue, tilting the
+        axis a median 2.4 deg. This one turned out to be nearly harmless, and
+        the reason is worth keeping: the tilt rotates the ENDPOINT ERROR vector,
+        not the reach. Those errors are about 9 mm, so 2.4 deg moves the
+        depth/lateral split by sin(2.4) * 9 = 0.4 mm. Re-running P60 Visits 1
+        and 2 confirmed it: 298 of 298 grasps moved under 5 mm, 90th percentile
+        0.4 mm. Scaling the tilt by the 400 mm reach length instead would give
+        17 mm and would be the wrong quantity.
+      - the RT onset search began at the warning, so it could lock onto the hand
+        settling during the foreperiod. 1/60 trials did: trial 11 reported
+        2291 ms for a real 305 ms.
+
+    Counting is exact rather than approximate: hand_samples is a causal filter
+    over the frames in order, so the number of samples the pre-cue frames yield
+    is precisely the index at which the post-cue ones begin. Matching on the
+    time column instead would be ambiguous, which is the bug this fixes.
+
+    Falls back to 0 when no cue event is present, which is the old behaviour and
+    is correct for the trial-1 window that opens at the cue already.
+    """
+    ci = next((i for i, fr in enumerate(tf)
+               if (fr.get("event") or "").strip() == "cue"), None)
+    if ci is None:
+        return 0, None
+    return len(hand_samples(tf[:ci], hand)), num(tf[ci], "t_session_s")
 
 
 def _butter2(fc, fs):
@@ -407,7 +479,7 @@ def analyse(grasps, frames, window, onset_frac, cutoff_hz, transport_frac,
             out.append(row)
             continue
 
-        t_mark = num(mark, "t_since_cue_s")
+        t_mark = num(mark, "t_session_s")      # same clock as hand_samples
         tx, ty, tz = (num(mark, "event_target_x"),
                       num(mark, "event_target_y"),
                       num(mark, "event_target_z"))
@@ -427,6 +499,13 @@ def analyse(grasps, frames, window, onset_frac, cutoff_hz, transport_frac,
         matched += 1
         sp = speeds(s)
         mark_i = nearest_index(s, t_mark)
+
+        # Where the cue actually is. See cue_sample_index(): sample 0 is the
+        # warning tone, not the cue. Clamped so a cue found at or after the
+        # grasp can never invert a search interval.
+        cue_i, t_cue = cue_sample_index(tf, hand)
+        if cue_i >= mark_i:
+            cue_i, t_cue = 0, None
 
         # --- closest approach, in the window after the grab ---
         best_d = best_t = best_p = best_i = None
@@ -450,16 +529,16 @@ def analyse(grasps, frames, window, onset_frac, cutoff_hz, transport_frac,
             # the same thing wherever in the grid the target sits. A world axis
             # would not: the grid is anchored to head yaw, and reach direction
             # differs for every target.
-            start = s[0][1:4] if gn == "1" else None
+            start = s[cue_i][1:4] if gn == "1" else None
             if start is None:
                 prev = next((fr for fr in tf
                              if (fr.get("event") or "").strip() == "grasp"
                              and (fr.get("grasp_in_trial") or "").strip() == str(int(gn) - 1)), None)
                 if prev is not None:
-                    pt = num(prev, "t_since_cue_s")
-                    start = s[nearest_index(s, pt)][1:4] if pt is not None else s[0][1:4]
+                    pt = num(prev, "t_session_s")
+                    start = s[nearest_index(s, pt)][1:4] if pt is not None else s[cue_i][1:4]
                 else:
-                    start = s[0][1:4]
+                    start = s[cue_i][1:4]
 
             ax = (tx - start[0], ty - start[1], tz - start[2])
             mag = math.sqrt(sum(c * c for c in ax))
@@ -531,12 +610,12 @@ def analyse(grasps, frames, window, onset_frac, cutoff_hz, transport_frac,
         # part between them, so onset has to be found inside the interval rather
         # than assumed to be at its start.
         if gn == "1":
-            search_from = 0
+            search_from = cue_i        # the cue, not the warning
         else:
             prev = next((fr for fr in tf
                          if (fr.get("event") or "").strip() == "grasp"
                          and (fr.get("grasp_in_trial") or "").strip() == str(int(gn) - 1)), None)
-            pt = num(prev, "t_since_cue_s") if prev is not None else None
+            pt = num(prev, "t_session_s") if prev is not None else None
             search_from = nearest_index(s, pt) if pt is not None else 0
 
         rel = onset_index(sp[search_from:], mark_i - search_from, onset_frac)
@@ -545,20 +624,26 @@ def analyse(grasps, frames, window, onset_frac, cutoff_hz, transport_frac,
         # Reaction time exists only for the first grasp: it is measured from cue
         # onset, and grasps 2 and 3 have no cue of their own.
         if gn == "1" and rel is not None:
-            row["rt_speed_criterion_s"] = f"{s[lo][0]:.4f}"
+            # s[][0] is session time now, so subtract the cue to get RT. Prefer
+            # the cue event's own timestamp; fall back to its sample only if the
+            # event carries no session time.
+            zero = t_cue if t_cue is not None else s[cue_i][0]
+            row["rt_speed_criterion_s"] = f"{s[lo][0] - zero:.4f}"
 
         row["hand_speed_at_grasp_mps"] = f"{sp[mark_i]:.4f}"
 
-        # How fast the hand was at the FIRST logged sample of the trial. Logging
-        # starts at cue onset, so anything well above tracking noise means the
-        # hand was already moving when the cue appeared - the trial anticipated
-        # the go signal. Worth having as a column because such a trial can still
-        # produce a plausible-looking RT: if the hand dips below threshold after
-        # the cue the search locks onto that dip and measures a second movement
-        # rather than the response. On the pilot, trial 21 read 394 mm/s here and
-        # still reported a perfectly ordinary 416 ms.
+        # How fast the hand was AT THE CUE. Anything well above the tracking
+        # noise floor (about 32 mm/s, from the held-still validation) means the
+        # hand was already moving when the go signal appeared - the trial
+        # anticipated it. Worth having as a column because such a trial can
+        # still produce a plausible-looking RT: if the hand dips below threshold
+        # after the cue the search locks onto that dip and measures a second
+        # movement rather than the response.
+        #
+        # This read sp[0] until 16 Oct 2026, which was the warning tone. See
+        # cue_sample_index() for what that cost and how it was found.
         if gn == "1":
-            row["speed_at_cue_mps"] = f"{sp[0]:.4f}"
+            row["speed_at_cue_mps"] = f"{sp[cue_i]:.4f}"
 
         # For GRASP 1 an unfound onset means there is no defined start, so these
         # stay blank rather than silently measuring from the cue. For grasps 2

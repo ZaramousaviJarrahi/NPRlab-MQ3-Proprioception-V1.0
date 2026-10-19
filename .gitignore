@@ -117,3 +117,10 @@ OpenXR Package Settings [0-9]*.asset
 
 # Local pre-edit safety copies, not part of the project
 _backups/
+
+# Python bytecode from the analysis scripts
+__pycache__/
+*.pyc
+
+# Pre-edit safety copies kept beside the file; git history is the real backup
+*.bak-*

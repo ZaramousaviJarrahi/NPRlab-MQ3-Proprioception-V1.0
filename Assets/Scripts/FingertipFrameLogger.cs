@@ -183,9 +183,23 @@ public class FingertipFrameLogger : MonoBehaviour
     /// seven of 54 acquisition trials had the hand already travelling faster than 100 mm/s at
     /// the cue, which could only be inferred from that first sample rather than seen.
     ///
-    /// With the window open through the foreperiod, t_since_cue_s runs NEGATIVE before the
-    /// cue. An early start is then visible directly: a trial whose speed rises before t = 0
-    /// anticipated the go signal, whatever reaction time the onset search produces for it.
+    /// With the window open through the foreperiod, an early start is visible directly: a
+    /// trial whose speed rises before the cue anticipated the go signal, whatever reaction
+    /// time the onset search produces for it.
+    ///
+    /// BUT NOT VIA t_since_cue_s, WHICH NEVER GOES NEGATIVE. This comment used to say it
+    /// did. It does not, and cannot: the cue time is unknown while the pre-cue rows are
+    /// being written, so they are stamped from the warning, and the column is simply
+    /// zeroed a second time at the cue (see the 'warning' branch in LateUpdate). Within
+    /// one trial it ramps up, returns to zero, and ramps again.
+    ///
+    /// Analysis must therefore locate the cue by its ROW, not by a timestamp, and do all
+    /// timing on t_session_s, which is absolute. Two readers got this wrong and gave
+    /// opposite false answers on the same P60 Visit 1 file: analyse_session.py read the
+    /// warning as the cue and reported 24 of 60 trials anticipating (the true figure is
+    /// 1), and check_precue_logging.py looked for negative times, found none, and
+    /// reported that pre-cue logging was not working at all. Both were fixed on
+    /// 16 Oct 2026; see claude/Fix-Record-2026-10-16-Cue-Index-Bug.md.
     ///
     /// Idempotent per trial, so a restarted foreperiod keeps one continuous trace - the
     /// movement that caused the restart is exactly what belongs on the record.
