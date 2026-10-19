@@ -280,6 +280,7 @@ public class SessionConfig : MonoBehaviour
             int cSeed = IndexOf(head, "seed");
             int cRetOrder = IndexOf(head, "retentiontestorder");
             int cTraOrder = IndexOf(head, "transfertaskorder");
+            int cV3Order = IndexOf(head, "visit3order");
 
             if (cPid < 0)
             {
@@ -330,6 +331,22 @@ public class SessionConfig : MonoBehaviour
                     string v = cell[cTraOrder].Trim().ToLowerInvariant();
                     if (v.Contains("5"))      { runner.transferTaskOrder = SessionRunner.TransferTaskOrder.Transfer5First; applied.Add("transferTaskOrder=Transfer5First"); }
                     else if (v.Contains("3")) { runner.transferTaskOrder = SessionRunner.TransferTaskOrder.Transfer3First; applied.Add("transferTaskOrder=Transfer3First"); }
+                }
+
+                // Visit 3 counterbalancing. Read NOW even though Visit 3 does not exist in
+                // the app yet, and deliberately so: allocation.csv has carried a balanced
+                // visit3Order column since the table was generated, and until 19 Oct 2026
+                // nothing read it. Had Visit 3 been built with this still missing, every
+                // participant would have run whichever order was hardcoded, the allocation
+                // table would still have looked balanced, and nothing in the data would
+                // have looked wrong. Reading and logging it from the start means the
+                // session log carries the intended order for every participant from P01
+                // on, so the first Visit 3 can be checked against it rather than trusted.
+                if (cV3Order >= 0 && cV3Order < cell.Length && runner != null)
+                {
+                    string v = cell[cV3Order].Trim().ToLowerInvariant();
+                    if (v.StartsWith("h"))      { runner.visit3Order = SessionRunner.Visit3Order.HiddenFirst;  applied.Add("visit3Order=HiddenFirst"); }
+                    else if (v.StartsWith("v")) { runner.visit3Order = SessionRunner.Visit3Order.VisibleFirst; applied.Add("visit3Order=VisibleFirst"); }
                 }
 
                 summary = $"ALLOCATION {controls.ParticipantId()}: " + string.Join("  ", applied);
@@ -434,7 +451,7 @@ public class SessionConfig : MonoBehaviour
 "transfer3 = 6,1,8\r\n" +
 "transfer5 = 1,3,7,9,5\r\n" +
 "retentionTrialsPerTask = 6\r\n" +
-"transferTrials        = 9\r\n" +
+"transferTrials        = 10\r\n" +
 "retentionOrder        = Random\r\n" +
 "\r\n" +
 "# Grid geometry in metres. Changing these mid-study breaks comparability.\r\n" +

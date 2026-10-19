@@ -53,9 +53,9 @@ public class SessionRunner : MonoBehaviour
 
     [Tooltip("Trials of EACH novel transfer task. Transfer is about performance on novel " +
              "material, so every extra trial is the participant learning the transfer task " +
-             "and diluting the measure. 9 allows both an initial-transfer score (first 3) " +
-             "and a stable mean.")]
-    public int transferTrials = 9;
+             "and diluting the measure. 10 allows an initial-transfer score (first 3), a " +
+             "stable mean, AND variable error, which needs 10 trials in a cell.")]
+    public int transferTrials = 10;
 
     [Tooltip("Retention trials per task IN EACH TEST ORDER. 3 x 3 tasks x 2 orders = 18, " +
              "matching Shea & Morgan exactly.")]
@@ -77,6 +77,18 @@ public class SessionRunner : MonoBehaviour
              "is done by a more fatigued participant who has also just had practice on a " +
              "novel task.")]
     public TransferTaskOrder transferTaskOrder = TransferTaskOrder.Transfer3First;
+
+    public enum Visit3Order { VisibleFirst, HiddenFirst }
+
+    [Tooltip("COUNTERBALANCE THIS ACROSS PARTICIPANTS. Visit 3 tests proprioceptive " +
+             "reaching with the hand visible and with it hidden; this sets which block " +
+             "comes first. Whichever is second carries the fatigue and the familiarity " +
+             "of the first.\n\n" +
+             "Set from allocation.csv (column visit3Order), balanced 15/15 within each " +
+             "practice group. Until Visit 3 exists in the app this field is read and " +
+             "logged but nothing consumes it - that is deliberate, so the allocation is " +
+             "already correct on the day Visit 3 is built.")]
+    public Visit3Order visit3Order = Visit3Order.VisibleFirst;
 
     public enum RetentionOrder { Random, Blocked }
 
@@ -334,22 +346,34 @@ public class SessionRunner : MonoBehaviour
         // transfer trials is its own open question in the literature (Meira & Tani 2001;
         // Perez, Meira & Tani 2005).
         //
-        // 9 resolves rather than splits this, PROVIDED the analysis is specified in advance:
+        // 10 resolves rather than splits this, PROVIDED the analysis is specified in advance:
         //   - PRIMARY transfer measure  = mean of trials 1-3, directly comparable to Shea &
         //                                 Morgan's three-trial set
-        //   - SECONDARY                 = trials 4-9, as a within-transfer learning curve
-        // On that plan the extra six trials cost nothing analytically and buy a second
-        // measure. Recorded in the supervisor agenda (23 Sep, item 2.2); awaiting sign-off.
+        //   - SECONDARY                 = trials 4-10, as a within-transfer learning curve
+        // On that plan the extra trials cost nothing analytically and buy a second measure.
+        // Recorded in the supervisor agenda (23 Sep, item 2.2).
+        //
+        // WHY 10 AND NOT 9 (decided 15 Oct 2026). Variable error is the spread of endpoints
+        // within a cell, and accuracy_table() will not report it below 10 trials (min_n=10),
+        // because a standard deviation from 9 points is too unstable to compare between
+        // groups. At 9 the eight transfer cells - 2 tasks x 2 orders x 2 groups - were the
+        // only cells in the design with no VE at all. One extra trial per task buys VE for
+        // all eight, and costs about 20 seconds of session time.
+        //
+        // Retention CANNOT have the same treatment: it is 3 trials per task per order by
+        // design, matching Shea & Morgan, and raising it would break that correspondence.
+        // Retention therefore has no VE, and that is a stated limitation, not an oversight.
+        //
         // Whatever is chosen must be identical for every participant and stated in the
         // methods.
-        if (transferTrials != 9)
+        if (transferTrials != 10)
         {
-            Debug.LogWarning($"SessionRunner: transferTrials is {transferTrials}. The recommended "
-                           + "value is 9 per transfer task (supervisor agenda 23 Sep, item 2.2): it "
-                           + "gives a stable mean AND lets the first 3 be read as initial transfer. "
-                           + "The study plan leaves this count TBD, so this is a recommendation and "
-                           + "not a rule - but whatever you run must be the SAME for every "
-                           + "participant, and it must be recorded in the methods.");
+            Debug.LogWarning($"SessionRunner: transferTrials is {transferTrials}. The value for "
+                           + "this study is 10 per transfer task (decided 15 Oct 2026): it gives a "
+                           + "stable mean, lets the first 3 be read as initial transfer, and is the "
+                           + "minimum that supports variable error in a cell. Below 10 the eight "
+                           + "transfer cells lose VE entirely. Whatever you run must be the SAME "
+                           + "for every participant, and it must be recorded in the methods.");
         }
 
         bool t3First = transferTaskOrder == TransferTaskOrder.Transfer3First;
