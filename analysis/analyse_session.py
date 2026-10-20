@@ -732,6 +732,60 @@ def per_trial(rows):
     return out
 
 
+def manipulation_check(rows):
+    """
+    Did the hidden condition actually hide the hands?
+
+    Visit 3's whole result rests on one bit per trial, and nothing in this
+    pipeline looked at it until now. `hands_visible` is written from the live
+    state of HandVisibilityToggle, and since 20 Oct it reports what actually
+    happened rather than what was asked for - a hide that silently fails leaves
+    it TRUE. So a row with block=Hidden and hands_visible=True is a trial the
+    participant could see their hand on, inside the condition defined by not
+    being able to.
+
+    That failure has already happened once in this project. The 28 Sep pilot
+    looked like it had two conditions and had one, because the flag recorded
+    the request and the request did nothing. It was invisible in the data.
+
+    Returns (rows_of_table, list_of_problem_strings).
+    """
+    cells = defaultdict(lambda: {"True": 0, "False": 0, "": 0})
+    for r in rows:
+        if (r.get("grasp_outcome") or "").strip() != "recorded":
+            continue
+        blk = (r.get("block") or "").strip()
+        hv = (r.get("hands_visible") or "").strip()
+        key = "True" if hv.lower() == "true" else ("False" if hv.lower() == "false" else "")
+        cells[blk][key] += 1
+
+    expected = {"Hidden": "False", "Visible": "True", "Refamiliarisation": "True"}
+
+    out, problems = [], []
+    for blk in sorted(cells):
+        c = cells[blk]
+        total = c["True"] + c["False"] + c[""]
+        want = expected.get(blk)
+        wrong = 0 if want is None else total - c[want] - 0
+        if want is not None:
+            wrong = total - c[want]
+        out.append({
+            "block": blk, "n": str(total),
+            "hands_visible_TRUE": str(c["True"]),
+            "hands_visible_FALSE": str(c["False"]),
+            "blank": str(c[""]),
+            "expected": want or "(no expectation)",
+            "verdict": "-" if want is None else ("ok" if wrong == 0 else f"{wrong} WRONG"),
+        })
+        if want is not None and wrong:
+            problems.append(
+                f"{blk}: {wrong} of {total} grasps have hands_visible != {want}. "
+                + ("The hidden condition did not hold on those trials and they are "
+                   "not usable for H4." if blk == "Hidden" else
+                   "The hands were not visible when they should have been."))
+    return out, problems
+
+
 def accuracy_table(rows, min_n=10):
     """
     CE, VE and RE per target position within each block.
@@ -1304,6 +1358,7 @@ def main():
                             args.max_endpoint_error)
     trials = per_trial(rows)
     acc = accuracy_table(rows)
+    mcheck, mproblems = manipulation_check(rows)
 
     vicon_lag = vicon_z = None
     vicon_note = ""
@@ -1327,6 +1382,8 @@ def main():
     write(stem + "_grasps.csv", rows, cols)
     write(stem + "_trials.csv", trials, list(trials[0].keys()) if trials else [])
     write(stem + "_accuracy.csv", acc, list(acc[0].keys()) if acc else [])
+    if mcheck:
+        write(stem + "_manipulation_check.csv", mcheck, list(mcheck[0].keys()))
 
     vprec = vicon_precision_table(rows) if args.vicon else []
     if vprec:
@@ -1354,6 +1411,23 @@ def main():
     fs = sum(1 for r in rec if (r.get("false_start") or "").strip() == "TRUE")
     oe = sum(1 for r in rec if (r.get("order_correct") or "").strip() == "FALSE")
     print(f"  home not verified {bad}    false starts {fs}    order errors {oe}")
+
+    # Printed before anything else substantive: if the manipulation did not hold,
+    # every number below it is describing something other than the intended design.
+    if any(r["expected"] != "(no expectation)" for r in mcheck):
+        print(f"\n  MANIPULATION CHECK  (hands_visible vs block)")
+        for r in mcheck:
+            if r["expected"] == "(no expectation)":
+                continue
+            print(f"    {r['block']:18s} n={r['n']:>3}   "
+                  f"visible {r['hands_visible_TRUE']:>3} / hidden {r['hands_visible_FALSE']:>3}"
+                  f"   expected {r['expected']:<5}  {r['verdict']}")
+        if mproblems:
+            print()
+            for pr in mproblems:
+                print(f"    *** {pr}")
+        else:
+            print("    the hidden condition held on every trial.")
 
     print(f"\n  TIMING")
     print(f"    total trial time     {med(col('total_trial_time_s', trials)):6.3f} s")
