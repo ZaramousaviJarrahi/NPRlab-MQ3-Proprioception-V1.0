@@ -1437,6 +1437,7 @@ GameObject:
   - component: {fileID: 365879021}
   - component: {fileID: 365879020}
   - component: {fileID: 365879022}
+  - component: {fileID: 365879023}
   m_Layer: 0
   m_Name: ControlManager
   m_TagString: Untagged
@@ -1780,6 +1781,7 @@ MonoBehaviour:
   retentionTrialsPerTaskPerOrder: 3
   retentionTestOrder: 0
   transferTaskOrder: 0
+  visit3Order: 0
   retentionOrder: 0
   currentBlock: 
   trialIndex: 0
@@ -2063,6 +2065,22 @@ MonoBehaviour:
   framesWritten: 0
   trialsLogged: 0
   currentFilePath: 
+--- !u!114 &365879023
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 365878999}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: b0ee3284f8ac1423e9080f781e5fdbd3, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  targetCamera: {fileID: 0}
+  vrBackgroundColor: {r: 0.12, g: 0.12, b: 0.14, a: 1}
+  useSkyboxInVR: 0
+  passthroughOn: 1
 --- !u!114 &377332078
 MonoBehaviour:
   m_ObjectHideFlags: 0

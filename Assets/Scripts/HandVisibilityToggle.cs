@@ -23,6 +23,12 @@ public class HandVisibilityToggle : MonoBehaviour
     public Transform leftHandOverride;
     public Transform rightHandOverride;
 
+    [Tooltip("Hide the fingertip marker spheres along with the hands. Leave ON for Visit 3 " +
+             "- a sphere left on the fingertip tells the participant exactly where their " +
+             "hand is, which is what the hidden condition removes. Turn off only if you are " +
+             "deliberately testing with the spheres visible.")]
+    public bool includeFingertipSpheres = true;
+
     [Header("Status (read-only while running)")]
     public bool handsVisible = true;
 
@@ -53,6 +59,19 @@ public class HandVisibilityToggle : MonoBehaviour
 
         if (rightHandOverride != null) yield return rightHandOverride;
         else if (_rig != null && _rig.rightHandAnchor != null) yield return _rig.rightHandAnchor;
+
+        // The fingertip marker spheres, added 20 Oct 2026. They are NOT children of the hand
+        // anchors - ControlManager holds them as its own scene objects and moves them to the
+        // fingertip every frame - so hiding the hand left a sphere sitting exactly where the
+        // participant's fingertip was. In the Visit 3 hidden condition that leaks the one
+        // thing the condition exists to take away, and it would have done so silently.
+        if (includeFingertipSpheres && ControlManager.Singleton != null)
+        {
+            if (ControlManager.Singleton.LeftFingerTipSphere != null)
+                yield return ControlManager.Singleton.LeftFingerTipSphere;
+            if (ControlManager.Singleton.RightFingerTipSphere != null)
+                yield return ControlManager.Singleton.RightFingerTipSphere;
+        }
     }
 
     void OnGUI()

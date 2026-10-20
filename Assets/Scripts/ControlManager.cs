@@ -190,8 +190,16 @@ public class ControlManager : NetworkBehaviour
             _rightIndexKnucklePosition = BoneToWorld(_rightHandState, OVRPlugin.BoneId.XRHand_IndexProximal, tracking);
             _rightWristPosition = BoneToWorld(_rightHandState, OVRPlugin.BoneId.XRHand_Wrist, tracking);
         }
-        _leftFingerTipSphere.position = _leftIndexTipPosition;
-        _rightFingerTipSphere.position = _rightIndexTipPosition;
+        // Null-guarded on 20 Oct 2026. These were bare dereferences. The spheres are
+        // assigned in Main 2.unity so it worked, but if either reference is ever lost -
+        // a prefab re-link, a scene merge - this throws every single frame, and because
+        // it throws BEFORE the end of UpdateHandPositions it takes the whole hand update
+        // with it. The symptom would be frozen hand positions and a logger quietly
+        // writing stale coordinates, which is far worse than a missing sphere.
+        if (_leftFingerTipSphere != null)
+            _leftFingerTipSphere.position = _leftIndexTipPosition;
+        if (_rightFingerTipSphere != null)
+            _rightFingerTipSphere.position = _rightIndexTipPosition;
     }
 
     // The index-fingertip bone, converted from OVRPlugin's tracking-space, right-handed
@@ -989,6 +997,18 @@ public class ControlManager : NetworkBehaviour
     public Vector3 RightIndexKnuckle => _rightIndexKnucklePosition;
     public Vector3 LeftWrist  => _leftWristPosition;
     public Vector3 RightWrist => _rightWristPosition;
+
+    // The two marker spheres that follow the fingertips. Exposed so HandVisibilityToggle
+    // can hide them in the Visit 3 hidden-hand condition.
+    //
+    // WHY THIS MATTERS MORE THAN IT LOOKS. These are separate scene objects, not children of
+    // OVRCameraRig's hand anchors, so hiding "the hands" did not touch them: the hand mesh
+    // would vanish and a sphere would stay sitting on the participant's fingertip. That is
+    // precisely the hand-position information Visit 3 exists to remove, so the hidden
+    // condition would have been measuring nothing, and nothing in the data would have looked
+    // wrong. Flagged as a question in the headset test guide, 20 Sep 2026; fixed 20 Oct 2026.
+    public Transform LeftFingerTipSphere  => _leftFingerTipSphere;
+    public Transform RightFingerTipSphere => _rightFingerTipSphere;
 
     // Distance from the nearer fingertip to a point. Returns false when neither hand is
     // usable, so callers can tell "far away" from "not tracked" - which matter differently:
