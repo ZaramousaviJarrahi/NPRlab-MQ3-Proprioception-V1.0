@@ -1044,6 +1044,142 @@ VICON_COLS = ["vicon_peak_speed_mps", "vicon_path_ratio", "vicon_speed_peaks",
               "vicon_endpoint_x_m", "vicon_endpoint_y_m", "vicon_endpoint_z_m",
               "vicon_endpoint_lead_s"]
 
+# Joint kinematics - the twelfth and last planned outcome measure.
+#
+# Angles at the moment of the grasp, and range of motion over the transport
+# window, for the three joints the marker set supports. Measured on the same
+# window as every other Vicon measure above, so they describe the same reach.
+JOINT_COLS = ["vicon_elbow_flex_grasp_deg", "vicon_elbow_flex_rom_deg",
+              "vicon_shoulder_flex_grasp_deg", "vicon_shoulder_flex_rom_deg",
+              "vicon_shoulder_abd_grasp_deg",
+              "vicon_wrist_flex_grasp_deg", "vicon_wrist_dev_grasp_deg"]
+
+
+# WHICH EULER CONVENTION, AND WHY NOT THE ONE ISB RECOMMENDS.
+#
+# The shoulder is read from RShoAnglesXZY. RShoAnglesYZY is also in every
+# export and is closer to the ISB recommendation for a ball joint, but it is
+# not safe on this data:
+#
+#   session            RShoAnglesXZY        RShoAnglesYZY
+#   P60 Visit 1        clean                clean
+#   P60 Visit 2        clean                clean
+#   CAL01 Visit 3      clean                X spans 5686 deg, Z spans 5683 deg
+#                                           (15.8 turns), 9 and 8 jumps > 90 deg
+#
+# The Visit 3 failure is gimbal lock, and the evidence is specific: all nine
+# jumps occur at YZY elevation below 0.8 degrees, median 0.5. When the middle
+# rotation of a YZY sequence goes to zero the two outer rotations become
+# degenerate and trade against each other, which is exactly why X and Z span
+# nearly equal and opposite amounts. 67.7% of all apparent motion in YZY X
+# happens in the 12.6% of frames with elevation below 20 degrees - the arm
+# hanging at rest between trials.
+#
+# UNWRAPPING DOES NOT FIX THIS, which is worth stating because the study plan
+# once claimed it would. Unwrapping repairs 180-degree wraps in an otherwise
+# well-defined signal. At 0.5 degrees of elevation the plane-of-elevation angle
+# is genuinely undefined and no post-processing recovers it.
+#
+# Why Visits 1 and 2 looked fine: P60 dropped below 10 degrees on 0.65% of
+# frames. Visit 3 does so on 6.34% and reaches 0.1, because it is a longer
+# session with more rest and the arm comes all the way down. Checking one
+# session was not enough, and on 20 Oct 2026 it produced the wrong answer.
+#
+# XZY's own gimbal lock is at second-rotation +-90 degrees. Across all three
+# sessions that component stays within -45.4 to +57.1, so it is nowhere near.
+#
+# Component identification is geometric, not assumed:
+#   RElbAnglesXZY X  = elbow flexion.    r = -0.995 against shoulder-to-wrist
+#                                        distance (n = 48,656, P60 Visit 1).
+#   RShoAnglesXZY X  = humerus elevation. r = -0.980 against the angle of the
+#                                        RGH->REJC vector from vertical
+#                                        (n = 41,565, CAL01 Visit 3).
+#   RShoAnglesXZY Y  = the orthogonal component, r = +0.048 against the same -
+#                      abduction/adduction.
+SHOULDER_CONV = "RShoAnglesXZY"
+ELBOW_CONV = "RElbAnglesXZY"
+WRIST_CONV = "RWristAnglesXZY"
+
+
+def read_vicon_angles(path):
+    """
+    Pull the joint angles out of the Model Outputs section of a Nexus export.
+
+    Returns (by_frame, rate, coverage_pct) where by_frame maps
+    "RElbAnglesXZY_X" -> a list indexed by (frame number - 1), holding a float
+    or None. Indexed by frame rather than packed, so a time converts straight
+    to an index and gaps stay visible instead of silently closing up.
+
+    Returns None if there is no Model Outputs section, which is the normal
+    state for an export whose pipeline was not run over the full range.
+
+    THE SUBJECT PREFIX IS STRIPPED. Columns read "p01:RElbAnglesXZY" even in a
+    CAL01 Visit 3 export, because the Nexus subject has never been renamed. The
+    prefix is matched off rather than trusted; relying on it would have silently
+    returned nothing for every session so far.
+    """
+    with open(path, newline="", encoding="utf-8-sig") as fh:
+        rows = list(csv.reader(fh))
+
+    known = {"Joints", "Trajectories", "Model Outputs", "Segments", "Devices"}
+    secs = [(i, r[0].strip()) for i, r in enumerate(rows) if r and r[0].strip() in known]
+    mo = next((i for i, nm in secs if nm == "Model Outputs"), None)
+    if mo is None:
+        return None
+
+    try:
+        rate = float(rows[mo + 1][0])
+    except (IndexError, ValueError):
+        return None
+
+    objs = rows[mo + 2]
+    comps = rows[mo + 3] if len(rows) > mo + 3 else []
+
+    wanted = {SHOULDER_CONV, ELBOW_CONV, WRIST_CONV}
+    cols = {}
+    cur = ""
+    for k, c in enumerate(objs):
+        if c.strip():
+            cur = c.strip().split(":")[-1]          # strip "p01:" and friends
+        if cur in wanted and k < len(comps):
+            axis = comps[k].strip()
+            if axis in ("X", "Y", "Z"):
+                cols[f"{cur}_{axis}"] = k
+    if not cols:
+        return None
+
+    end = next((i for i, _ in secs if i > mo), len(rows))
+    body = rows[mo + 5:end]
+    nframes = 0
+    for r in body:
+        try:
+            nframes = max(nframes, int(r[0]))
+        except (IndexError, ValueError):
+            continue
+    if nframes == 0:
+        return None
+
+    by_frame = {name: [None] * nframes for name in cols}
+    filled = 0
+    for r in body:
+        try:
+            f = int(r[0])
+        except (IndexError, ValueError):
+            continue
+        any_here = False
+        for name, k in cols.items():
+            if k < len(r) and r[k].strip():
+                try:
+                    by_frame[name][f - 1] = float(r[k])
+                    any_here = True
+                except ValueError:
+                    pass
+        if any_here:
+            filled += 1
+
+    coverage = 100.0 * filled / nframes if nframes else 0.0
+    return by_frame, rate, coverage
+
 
 def read_vicon_rfin(path):
     """
@@ -1163,6 +1299,7 @@ def add_vicon(rows, frames, vicon_path, cutoff_hz, transport_frac, endpoint_wind
     place that knows which Vicon samples belong to which reach.
     """
     traj = defaultdict(list)
+    _angle_coverage = [0.0]          # filled in below; read by main() for the summary
     got = read_vicon_rfin(vicon_path)
     if got is None:
         return rows, None, 0.0, "no usable Trajectories/RFIN section in that file", {}
@@ -1174,6 +1311,42 @@ def add_vicon(rows, frames, vicon_path, cutoff_hz, transport_frac, endpoint_wind
         return rows, None, 0.0, "numpy is needed for Vicon alignment (pip3 install numpy)", {}
     if lag is None:
         return rows, None, 0.0, "not enough overlapping movement to align", {}
+
+    # Joint angles, if the pipeline was run over the full range in Nexus.
+    # Deliberately not fatal: everything above works without them.
+    ang = read_vicon_angles(vicon_path)
+    angles, ang_rate, ang_cov = (ang if ang else (None, rate, 0.0))
+    _angle_coverage[0] = ang_cov
+    add_vicon.last_angle_coverage = ang_cov
+    add_vicon.last_angle_names = sorted(angles.keys()) if angles else []
+
+    def angle_at(name, t_vicon):
+        """Angle value at a Vicon-clock time, or None.
+
+        Looked up by TIME rather than by position in the marker series. The
+        marker series drops frames with missing data, so its index and the
+        Model Outputs row number are not the same thing - using one for the
+        other would mis-assign angles by however many frames had been dropped
+        earlier in the capture, with no symptom.
+        """
+        if not angles or name not in angles:
+            return None
+        i = int(round(t_vicon * ang_rate)) - 1
+        if i < 0 or i >= len(angles[name]):
+            return None
+        return angles[name][i]
+
+    def angle_span(name, t_from, t_to):
+        """Range of motion between two Vicon-clock times, or None."""
+        if not angles or name not in angles:
+            return None
+        a = int(round(t_from * ang_rate)) - 1
+        b = int(round(t_to * ang_rate)) - 1
+        if a > b:
+            a, b = b, a
+        a, b = max(0, a), min(len(angles[name]) - 1, b)
+        v = [x for x in angles[name][a:b + 1] if x is not None]
+        return (max(v) - min(v)) if len(v) >= 2 else None
 
     t0 = min(float(r["t_session_s"]) for r in frames)
     samples = [(vt[i], vp[i][0], vp[i][1], vp[i][2]) for i in range(len(vt))]
@@ -1209,7 +1382,7 @@ def add_vicon(rows, frames, vicon_path, cutoff_hz, transport_frac, endpoint_wind
 
     done = 0
     for row in rows:
-        for c in VICON_COLS:
+        for c in VICON_COLS + JOINT_COLS:
             row.setdefault(c, "")
         if (row.get("grasp_outcome") or "").strip() != "recorded":
             continue
@@ -1231,6 +1404,23 @@ def add_vicon(rows, frames, vicon_path, cutoff_hz, transport_frac, endpoint_wind
         if not seg:
             continue
         row["vicon_peak_speed_mps"] = f"{max(seg):.4f}"
+
+        # Joint angles on the same transport window as everything else here, so
+        # they describe the same reach rather than a slightly different one.
+        t_grasp = samples[i1][0]
+        t_a, t_b = samples[a][0], samples[b][0]
+
+        def put(colname, value, fmt="{:.2f}"):
+            if value is not None:
+                row[colname] = fmt.format(value)
+
+        put("vicon_elbow_flex_grasp_deg", angle_at(ELBOW_CONV + "_X", t_grasp))
+        put("vicon_elbow_flex_rom_deg", angle_span(ELBOW_CONV + "_X", t_a, t_b))
+        put("vicon_shoulder_flex_grasp_deg", angle_at(SHOULDER_CONV + "_X", t_grasp))
+        put("vicon_shoulder_flex_rom_deg", angle_span(SHOULDER_CONV + "_X", t_a, t_b))
+        put("vicon_shoulder_abd_grasp_deg", angle_at(SHOULDER_CONV + "_Y", t_grasp))
+        put("vicon_wrist_flex_grasp_deg", angle_at(WRIST_CONV + "_X", t_grasp))
+        put("vicon_wrist_dev_grasp_deg", angle_at(WRIST_CONV + "_Y", t_grasp))
 
         # Time after peak velocity, the deceleration phase as a percentage of the
         # transport phase. Same arithmetic as the Quest column above, on Vicon's
@@ -1378,7 +1568,8 @@ def main():
         if "reaction_time_s" in _r:
             _r["cue_to_home_exit_s"] = _r.pop("reaction_time_s")
     cols = [("cue_to_home_exit_s" if c == "reaction_time_s" else c)
-            for c in grasps[0].keys()] + NEW_COLS + (VICON_COLS if args.vicon else [])
+            for c in grasps[0].keys()] + NEW_COLS + \
+           ((VICON_COLS + JOINT_COLS) if args.vicon else [])
     write(stem + "_grasps.csv", rows, cols)
     write(stem + "_trials.csv", trials, list(trials[0].keys()) if trials else [])
     write(stem + "_accuracy.csv", acc, list(acc[0].keys()) if acc else [])
@@ -1488,6 +1679,31 @@ def main():
                   f"(Quest: {med(col('path_ratio')):.3f})")
             print(f"    speed peaks     {med(col('vicon_speed_peaks')):6.1f}      "
                   f"(Quest: {med(col('speed_peaks')):.1f})")
+
+            # JOINT ANGLE COVERAGE. Reported every session, because a partial
+            # Model Outputs section is invisible otherwise: the angles that are
+            # present look entirely normal, and the grasps outside the covered
+            # range simply come back blank. On 15 Oct an export carried angles
+            # for 4.8% of the session - 23 seconds of eight minutes - and that
+            # went unnoticed for five days.
+            #
+            # Both of Nexus's First/Last Frame settings must be plain
+            # First Frame / Last Frame, never Full Frame:
+            #   Pipeline > Run Dynamic BodyLanguage Model   (what is COMPUTED)
+            #   Pipeline > Export ASCII CSV                 (what is WRITTEN)
+            # Fixing only the second gives complete markers and empty angles.
+            _cov = getattr(add_vicon, "last_angle_coverage", None)
+            if _cov is None:
+                print("    joint angles    none in this export (no Model Outputs section)")
+            else:
+                _n = len(col("vicon_elbow_flex_grasp_deg"))
+                _tot = len(rec)
+                _flag = "" if _cov >= 95 else "   <-- LOW, re-export from Nexus"
+                print(f"    joint angles    {_cov:5.1f}% of frames,"
+                      f" {_n} of {_tot} grasps{_flag}")
+                if _cov < 95:
+                    print("                    Set BOTH Nexus First/Last Frame settings:")
+                    print("                      Run Dynamic BodyLanguage Model, and Export ASCII CSV.")
 
     print(f"\n  WROTE")
     _written = ["_grasps.csv", "_trials.csv", "_accuracy.csv"]
