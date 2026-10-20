@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using Oculus.Interaction;
 using UnityEngine;
 
 // Hides / shows the virtual hands for the Visit 3 proprioception condition.
@@ -40,14 +41,20 @@ public class HandVisibilityToggle : MonoBehaviour
         handsVisible = true;
         _rig = FindAnyObjectByType<OVRCameraRig>();
 
-        if (_rig == null && leftHandOverride == null && rightHandOverride == null)
+        // Count what is actually drawable up front, so a scene that cannot support the
+        // hidden condition says so at startup rather than at the first hidden block.
+        int visuals = FindObjectsByType<HandVisual>(
+            FindObjectsInactive.Include, FindObjectsSortMode.None).Length;
+
+        if (visuals == 0 && leftHandOverride == null && rightHandOverride == null)
         {
-            Debug.LogError("HandVisibilityToggle: no OVRCameraRig found in this scene. " +
-                           "Hide Hands will NOT work - do not run a hidden-hand session until this is fixed.");
+            Debug.LogError("HandVisibilityToggle: no HandVisual found in this scene, so there " +
+                           "is no visible hand to hide OR to show. Do not run a Visit 3 " +
+                           "session until this is fixed.");
         }
         else
         {
-            Debug.Log("Hands visible at start");
+            Debug.Log($"Hands visible at start ({visuals} HandVisual found)");
         }
     }
 
@@ -60,9 +67,31 @@ public class HandVisibilityToggle : MonoBehaviour
         if (rightHandOverride != null) yield return rightHandOverride;
         else if (_rig != null && _rig.rightHandAnchor != null) yield return _rig.rightHandAnchor;
 
-        // The fingertip marker spheres, added 20 Oct 2026. They are NOT children of the hand
-        // anchors - ControlManager holds them as its own scene objects and moves them to the
-        // fingertip every frame - so hiding the hand left a sphere sitting exactly where the
+        // THE HANDS THEMSELVES, added 20 Oct 2026, and the reason this script did not work.
+        //
+        // The visible hands are not under OVRCameraRig's hand anchors. The Interaction SDK
+        // puts them under OVRInteraction as OVRLeftHandVisual / OVRRightHandVisual - a
+        // different branch of the hierarchy entirely - and each carries a HandVisual
+        // component driving three SkinnedMeshRenderers from the tracked skeleton. The hand
+        // anchors hold tracking transforms and interactors, and render nothing at all.
+        //
+        // So every renderer this script could reach was a renderer that drew nothing, and
+        // "Hide Hands" hid the hands only in the sense that there was never anything there.
+        // It reported success because it was counting the fingertip spheres.
+        //
+        // Found by component type rather than by name or hierarchy position: the Interaction
+        // SDK rebuilds and renames these objects between versions, and a path or a dragged
+        // reference would break quietly. A HandVisual is by definition the thing that draws
+        // a hand, so this stays correct as long as the SDK does.
+        foreach (HandVisual hv in FindObjectsByType<HandVisual>(
+                     FindObjectsInactive.Include, FindObjectsSortMode.None))
+        {
+            if (hv != null) yield return hv.transform;
+        }
+
+        // The fingertip marker spheres. They are NOT children of the hand anchors either -
+        // ControlManager holds them as its own scene objects and moves them to the fingertip
+        // every frame - so hiding the hand left a sphere sitting exactly where the
         // participant's fingertip was. In the Visit 3 hidden condition that leaks the one
         // thing the condition exists to take away, and it would have done so silently.
         if (includeFingertipSpheres && ControlManager.Singleton != null)
@@ -112,7 +141,14 @@ public class HandVisibilityToggle : MonoBehaviour
         }
         else
         {
+            // The count is the check. A Visit 3 scene should disable several renderers:
+            // three per HandVisual plus one per fingertip sphere. A count of 1 or 2 means
+            // only the spheres were found and the hands themselves were missed again.
             Debug.Log($"Hands HIDDEN ({_hiddenRenderers.Count} renderers disabled)");
+            if (_hiddenRenderers.Count <= 2)
+                Debug.LogWarning("HandVisibilityToggle: only " + _hiddenRenderers.Count +
+                                 " renderer(s) hidden. That is the fingertip spheres alone - " +
+                                 "the hand meshes were NOT hidden. Check before collecting.");
         }
     }
 
