@@ -90,6 +90,26 @@ public class SessionRunner : MonoBehaviour
              "already correct on the day Visit 3 is built.")]
     public Visit3Order visit3Order = Visit3Order.VisibleFirst;
 
+    [Tooltip("Trials in each of Visit 3's four mini-blocks. 15 gives 30 per condition, " +
+             "and because every trial visits all three of the task's positions that is " +
+             "n = 30 per position per condition - three times the 10 needed for variable " +
+             "error. Must be identical for every participant.")]
+    public int visit3TrialsPerMiniBlock = 15;
+
+    [Tooltip("Re-familiarisation trials at the start of Visit 3, always visible and " +
+             "excluded from analysis. 6 matches Visit 1's familiarization block. These " +
+             "re-familiarise the DISPLAY - passthrough off, virtual hand - not the task, " +
+             "so they use the familiarization sequence, not the trained one.")]
+    public int visit3RefamiliarisationTrials = 6;
+
+    [Tooltip("The single trained task measured in Visit 3. Task A for everyone: fixing it " +
+             "keeps participants comparable, and counterbalancing it would need a new " +
+             "allocation column. Note that for Blocked participants taskOrder varies, so " +
+             "Task A was trained first for some and later for others; Visit 2 re-exposes " +
+             "all three tasks in between, which partly resets recency. State this choice " +
+             "in the methods rather than leaving it implicit.")]
+    public TrialCounter.BlockedTask visit3TrainedTask = TrialCounter.BlockedTask.TaskA;
+
     public enum RetentionOrder { Random, Blocked }
 
     [Tooltip("STILL AN OPEN DECISION in the study plan - confirm it before collecting.\n\n" +
@@ -150,7 +170,34 @@ public class SessionRunner : MonoBehaviour
         // The visit decides the shape of the session. Visit 1 is acquisition; Visit 2 is
         // retention on the trained tasks followed by the two novel transfer tasks.
         var controls = GetComponent<ExperimenterControls>();
+
+        // Passthrough is a property of the VISIT, so it is set here, in one place, for
+        // every visit - not only switched off for Visit 3. Setting it explicitly both ways
+        // means an experimenter who changes the visit number and replans does not inherit
+        // the previous visit's display, which would be invisible in the data and fatal to
+        // it: a Visit 1 run in VR is not comparable to any other Visit 1.
+        var passthrough = GetComponent<PassthroughController>();
+        if (passthrough != null && controls != null)
+            passthrough.SetPassthrough(controls.visitNumber != 3);
+
+        // Same argument for the hands, and a failure mode worth naming: Visit 3 leaves them
+        // hidden at the end of a Hidden mini-block. Replanning as Visit 1 or 2 without this
+        // would inherit that, and ApplyVisit3Visibility returns early for those visits so
+        // nothing else would ever put them back. The result would be an entire acquisition
+        // session run with no visible hands, labelled as a normal one.
+        if (controls != null && controls.visitNumber != 3)
+        {
+            var hands = GetComponent<HandVisibilityToggle>();
+            if (hands != null && !hands.handsVisible)
+            {
+                hands.ShowHands();
+                Debug.Log($"Visit {controls.visitNumber}: hands restored to VISIBLE " +
+                          "(they were hidden, presumably by an earlier Visit 3 plan).");
+            }
+        }
+
         if (controls != null && controls.visitNumber == 2) { BuildVisit2Plan(); return; }
+        if (controls != null && controls.visitNumber == 3) { BuildVisit3Plan(); return; }
 
         var tasks = new[] { TrialCounter.BlockedTask.TaskA,
                             TrialCounter.BlockedTask.TaskB,
@@ -269,6 +316,115 @@ public class SessionRunner : MonoBehaviour
     //
     // The block label records WHICH half each trial was in, because retention test order is
     // now a within-subjects factor and a factor that is not in the data cannot be analysed.
+    // VISIT 3 - proprioception. One trained task, four mini-blocks of 15 in ABBA order,
+    // the starting condition taken from allocation.csv and balanced within each practice
+    // group. Re-familiarisation first, visible, excluded from analysis.
+    //
+    // WHY ABBA AND NOT ABAB OR AABB. Each condition's mean time-position is the same under
+    // ABBA - (1+4)/2 = (2+3)/2 = 2.5 - so any linear drift across the session (fatigue,
+    // warm-up, tracking drift) cancels exactly out of the Visible-minus-Hidden contrast.
+    // AABB and ABAB both leave one condition systematically earlier than the other.
+    //
+    // WHY BOTH CONDITIONS RUN WITH PASSTHROUGH OFF. There is no way to subtract a real hand
+    // from the camera image - Meta exposes no per-region passthrough, and a partial occluder
+    // fails exactly at the endpoint, where the hand reaches the target and where accuracy is
+    // measured. So Visit 3 renders a virtual hand in the Visible condition and nothing in the
+    // Hidden one, and the hand is the ONLY difference between them. The cost is that Visit 3
+    // is not directly comparable to Visits 1 and 2, since the display differs in both of its
+    // conditions; H4 survives because it is a within-Visit-3 contrast. Stated as a limitation.
+    private void BuildVisit3Plan()
+    {
+        // The two mini-blocks of a condition share ONE block name on purpose.
+        //
+        // `block` is already written to every CSV row and is already the cell key in
+        // accuracy_table(), so "Visible" twice merges into a single cell of n = 30 per
+        // position - exactly what variable error needs - and NO analysis change is required.
+        // Naming them Visible_1 / Visible_2 would split each condition into two cells of 15
+        // and halve the n everywhere. Mini-block order is still recoverable from
+        // trial_number if an order effect ever needs checking.
+        bool visibleFirst = visit3Order == Visit3Order.VisibleFirst;
+        string a = visibleFirst ? "Visible" : "Hidden";
+        string b = visibleFirst ? "Hidden"  : "Visible";
+        string[] miniBlocks = { a, b, b, a };
+        string orderLabel = string.Join("/", miniBlocks);
+
+        int perCondition = visit3TrialsPerMiniBlock * 2;
+        if (perCondition < 10)
+        {
+            Debug.LogWarning($"SessionRunner: visit3TrialsPerMiniBlock is " +
+                             $"{visit3TrialsPerMiniBlock}, giving {perCondition} trials per " +
+                             "condition. accuracy_table() will not report variable error below " +
+                             "10 in a cell, because a standard deviation from fewer points is " +
+                             "too unstable to compare between groups - so H4 would have no VE " +
+                             "at all. The value for this study is 15. Whatever you run must be " +
+                             "the SAME for every participant and recorded in the methods.");
+        }
+
+        // Re-familiarisation: the display has changed, not the task. Uses the familiarization
+        // sequence (two grasps, deliberately outside the matched family) rather than the
+        // trained task, so it adds no extra exposure to the very task being measured.
+        for (int i = 0; i < visit3RefamiliarisationTrials; i++)
+        {
+            _order.Add(TrialCounter.BlockedTask.Familiarization);
+            _blockOf.Add("Refamiliarisation");
+        }
+
+        foreach (string blockName in miniBlocks)
+        {
+            for (int i = 0; i < visit3TrialsPerMiniBlock; i++)
+            {
+                _order.Add(visit3TrainedTask);
+                _blockOf.Add(blockName);
+            }
+        }
+
+        trialIndex = 0;
+        totalTrials = _order.Count;
+        sessionPlanned = true;
+
+        Debug.Log($"VISIT 3 planned: {visit3RefamiliarisationTrials} re-familiarisation " +
+                  $"(visible, excluded) + 4 x {visit3TrialsPerMiniBlock} {visit3TrainedTask} " +
+                  $"in {orderLabel} order = {totalTrials} trials. " +
+                  $"{perCondition} per condition, each trial visiting all three positions. " +
+                  "Passthrough OFF for the whole visit.");
+
+        AssignForeperiods();
+        ExportPlan($"Visit 3 - proprioception, {visit3TrainedTask}, " +
+                   $"{orderLabel} ({visit3Order})", false);
+        PrepareCurrentTrial();
+    }
+
+    // Drives hand visibility from the block name, every trial, for Visit 3 only.
+    //
+    // Driven from the PLAN rather than from a button because the manipulation must not
+    // depend on the experimenter remembering to press B at three block boundaries while
+    // also reading sequences aloud and watching the participant. A missed press would
+    // produce 15 trials labelled Hidden that were collected visible, and nothing in the
+    // data would contradict the label.
+    private void ApplyVisit3Visibility()
+    {
+        var controls = GetComponent<ExperimenterControls>();
+        if (controls == null || controls.visitNumber != 3) return;
+
+        var hands = GetComponent<HandVisibilityToggle>();
+        if (hands == null)
+        {
+            Debug.LogError("SessionRunner: Visit 3 planned but there is no " +
+                           "HandVisibilityToggle on this object. The hidden condition " +
+                           "cannot be applied - do not collect.");
+            return;
+        }
+
+        bool shouldBeVisible = currentBlock != "Hidden";
+        if (shouldBeVisible == hands.handsVisible) return;   // already correct
+
+        if (shouldBeVisible) hands.ShowHands();
+        else                 hands.HideHands();
+
+        Debug.Log($"Visit 3: block '{currentBlock}' -> hands " +
+                  $"{(shouldBeVisible ? "VISIBLE" : "HIDDEN")}");
+    }
+
     private void BuildVisit2Plan()
     {
         var trained = new[] { TrialCounter.BlockedTask.TaskA,
@@ -693,6 +849,9 @@ public class SessionRunner : MonoBehaviour
         if (_trialCounter != null) _trialCounter.currentTask = _order[trialIndex];
         currentBlock = _blockOf[trialIndex];
         waitingToStartTrial = true;
+
+        // Visit 3 only; a no-op in Visits 1 and 2.
+        ApplyVisit3Visibility();
 
         // Sound the block-change chime when the task the experimenter must read out
         // changes. In the blocked condition this fires three times in a session and is
