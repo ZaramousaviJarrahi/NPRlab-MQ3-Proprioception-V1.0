@@ -151,7 +151,20 @@ public class HandVisibilityToggle : MonoBehaviour
 
         visualsForcedOff = _forcedOff.Count;
         renderersDisabled = _hiddenRenderers.Count;
-        handsVisible = false;
+
+        // handsVisible IS THE DATA. DataRecorder writes it to the hands_visible column of
+        // every row, so this flag must describe what actually happened, not what was asked
+        // for. Setting it false unconditionally - which is what it used to do - means a
+        // failed hide produces trials stamped hands_visible=False while the participant can
+        // see their hand. That is exactly how the 28 Sep pilot came to look like it had two
+        // conditions when it had one, and it is undetectable after the fact.
+        //
+        // Hidden is therefore claimed only when a hand visual was genuinely switched off,
+        // or when an override root was supplied and something under it was.
+        bool reallyHidden = visualsForcedOff > 0
+                         || ((leftHandOverride != null || rightHandOverride != null)
+                             && renderersDisabled > 0);
+        handsVisible = !reallyHidden;
 
         if (visualsForcedOff == 0 && renderersDisabled == 0)
         {
@@ -164,7 +177,8 @@ public class HandVisibilityToggle : MonoBehaviour
         {
             Debug.LogWarning($"HandVisibilityToggle: {renderersDisabled} renderer(s) hidden but " +
                              "NO hand visual was switched off. That is the fingertip spheres " +
-                             "alone - the hands are still visible. Check before collecting.");
+                             "alone - the hands are still visible. hands_visible stays TRUE so " +
+                             "the data does not claim otherwise. Check before collecting.");
         }
         else
         {
