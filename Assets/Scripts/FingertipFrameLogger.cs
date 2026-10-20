@@ -103,6 +103,10 @@ public class FingertipFrameLogger : MonoBehaviour
         "trial_number,grasp_in_trial,frame,t_session_s,t_since_cue_s," +
         "left_tip_x,left_tip_y,left_tip_z,left_confidence,left_sample_t," +
         "right_tip_x,right_tip_y,right_tip_z,right_confidence,right_sample_t," +
+        "left_knuckle_x,left_knuckle_y,left_knuckle_z," +
+        "right_knuckle_x,right_knuckle_y,right_knuckle_z," +
+        "left_wrist_x,left_wrist_y,left_wrist_z," +
+        "right_wrist_x,right_wrist_y,right_wrist_z," +
         "event,event_target_position_number,event_target_x,event_target_y,event_target_z," +
         "trial_attempt";
 
@@ -320,10 +324,16 @@ public class FingertipFrameLogger : MonoBehaviour
     private void WriteFrame()
     {
         Vector3 lt = Vector3.zero, rt = Vector3.zero;
+        Vector3 lk = Vector3.zero, rk = Vector3.zero;
+        Vector3 lw = Vector3.zero, rw = Vector3.zero;
         if (ControlManager.Singleton != null)
         {
             lt = ControlManager.Singleton.LeftIndexTip;
             rt = ControlManager.Singleton.RightIndexTip;
+            lk = ControlManager.Singleton.LeftIndexKnuckle;
+            rk = ControlManager.Singleton.RightIndexKnuckle;
+            lw = ControlManager.Singleton.LeftWrist;
+            rw = ControlManager.Singleton.RightWrist;
         }
 
         double leftSample, rightSample;
@@ -368,6 +378,10 @@ public class FingertipFrameLogger : MonoBehaviour
             leftConf.ToString(CultureInfo.InvariantCulture), D(leftSample),
             F(rt.x), F(rt.y), F(rt.z),
             rightConf.ToString(CultureInfo.InvariantCulture), D(rightSample),
+            F(lk.x), F(lk.y), F(lk.z),
+            F(rk.x), F(rk.y), F(rk.z),
+            F(lw.x), F(lw.y), F(lw.z),
+            F(rw.x), F(rw.y), F(rw.z),
             ev, evIndex, evX, evY, evZ,
             _trialAttempt.ToString(CultureInfo.InvariantCulture)
         }));

@@ -86,6 +86,12 @@ public class ControlManager : NetworkBehaviour
     [SerializeField] private Transform _lineRendererDebugController;
     private Vector3 _rightIndexTipPosition;
     private Vector3 _leftIndexTipPosition;
+    // Knuckle and wrist, for the Quest-vs-Vicon landmark comparison. See the public
+    // accessors further down for why these are logged alongside the fingertip, not instead.
+    private Vector3 _rightIndexKnucklePosition;
+    private Vector3 _leftIndexKnucklePosition;
+    private Vector3 _rightWristPosition;
+    private Vector3 _leftWristPosition;
     private int _numberOfTargetsSpawned = 0;
     private List<Transform> _targets;
     private Vector3 _pivotPosition;
@@ -170,6 +176,8 @@ public class ControlManager : NetworkBehaviour
         if (OVRPlugin.GetHandState(OVRPlugin.Step.Render, OVRPlugin.Hand.HandLeft, ref _leftHandState))
         {
             _leftIndexTipPosition = IndexTipToWorld(_leftHandState, tracking);
+            _leftIndexKnucklePosition = BoneToWorld(_leftHandState, OVRPlugin.BoneId.XRHand_IndexProximal, tracking);
+            _leftWristPosition = BoneToWorld(_leftHandState, OVRPlugin.BoneId.XRHand_Wrist, tracking);
         }
         // This second call used to pass 'ref _leftHandState' while querying the RIGHT hand,
         // and then read the tip back out of _leftHandState. It gave the right answer only
@@ -179,6 +187,8 @@ public class ControlManager : NetworkBehaviour
         if (OVRPlugin.GetHandState(OVRPlugin.Step.Render, OVRPlugin.Hand.HandRight, ref _rightHandState))
         {
             _rightIndexTipPosition = IndexTipToWorld(_rightHandState, tracking);
+            _rightIndexKnucklePosition = BoneToWorld(_rightHandState, OVRPlugin.BoneId.XRHand_IndexProximal, tracking);
+            _rightWristPosition = BoneToWorld(_rightHandState, OVRPlugin.BoneId.XRHand_Wrist, tracking);
         }
         _leftFingerTipSphere.position = _leftIndexTipPosition;
         _rightFingerTipSphere.position = _rightIndexTipPosition;
@@ -189,8 +199,18 @@ public class ControlManager : NetworkBehaviour
     // is unchanged from the original code; TransformPoint is the tracking -> world step.
     private static Vector3 IndexTipToWorld(OVRPlugin.HandState state, Transform trackingSpace)
     {
-        var tip = state.BonePositions[(int)OVRPlugin.BoneId.XRHand_IndexTip];
-        Vector3 inTrackingSpace = new Vector3(tip.x, tip.y, -tip.z);
+        return BoneToWorld(state, OVRPlugin.BoneId.XRHand_IndexTip, trackingSpace);
+    }
+
+    // Any hand bone, in world space. Generalised from IndexTipToWorld on 20 Oct 2026 so the
+    // knuckle and the wrist can be logged alongside the fingertip - see the properties below
+    // for why those two are wanted. The (x, y, -z) flip is the OVR-to-Unity handedness
+    // change and is unchanged from the original code; TransformPoint is tracking -> world.
+    private static Vector3 BoneToWorld(OVRPlugin.HandState state, OVRPlugin.BoneId bone,
+                                       Transform trackingSpace)
+    {
+        var p = state.BonePositions[(int)bone];
+        Vector3 inTrackingSpace = new Vector3(p.x, p.y, -p.z);
         return trackingSpace != null ? trackingSpace.TransformPoint(inTrackingSpace)
                                      : inTrackingSpace;
     }
@@ -940,6 +960,35 @@ public class ControlManager : NetworkBehaviour
     // one re-reading and re-converting the bone data and risking a different answer.
     public Vector3 LeftIndexTip  => _leftIndexTipPosition;
     public Vector3 RightIndexTip => _rightIndexTipPosition;
+
+    // The index KNUCKLE and the WRIST, logged alongside the fingertip from 20 Oct 2026.
+    //
+    // WHY BOTH, AND WHY NOT INSTEAD OF THE FINGERTIP:
+    // Endpoint error stays on the fingertip. The fingertip is the point that reaches the
+    // target, the target is defined in the same coordinate frame, and the study plan sets
+    // out at length why the Vicon RFIN marker cannot be used for that measure. None of
+    // that changes.
+    //
+    // These two exist for the Quest-versus-Vicon VALIDATION, which is a different job. That
+    // comparison currently puts the Quest fingertip against Vicon's RFIN marker, which sits
+    // on the BACK of the hand - two different physical points several centimetres apart,
+    // with an offset that rotates as the wrist does. On P60 the Quest reported peak speed
+    // 57% above Vicon, where Campos et al. (2026) report 3-8% against OptiTrack. Part of
+    // that gap is real kinematics rather than error: during a reach-to-grasp the fingertip
+    // carries the hand's translation PLUS wrist and finger rotation, so it genuinely moves
+    // faster than the back of the hand.
+    //
+    //   knuckle (XRHand_IndexProximal) matches where RFIN sits.
+    //   wrist   (XRHand_Wrist)         matches Campos's comparison, which used a single
+    //                                  wrist marker - and the RWRA/RWRB midpoint is already
+    //                                  in the marker set, so it needs no Vicon change.
+    //
+    // Suggested by Alix Kitson, 19 Oct 2026. Logging both costs two more columns each and
+    // settles which landmark pairing to report without recollecting anything.
+    public Vector3 LeftIndexKnuckle  => _leftIndexKnucklePosition;
+    public Vector3 RightIndexKnuckle => _rightIndexKnucklePosition;
+    public Vector3 LeftWrist  => _leftWristPosition;
+    public Vector3 RightWrist => _rightWristPosition;
 
     // Distance from the nearer fingertip to a point. Returns false when neither hand is
     // usable, so callers can tell "far away" from "not tracked" - which matter differently:
