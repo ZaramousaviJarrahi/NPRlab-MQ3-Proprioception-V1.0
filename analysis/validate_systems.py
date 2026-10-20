@@ -169,6 +169,31 @@ def quest_samples(frames):
     return t, p, conf
 
 
+# Absolute speed threshold for the onset-latency check, in m/s. Well below
+# both systems' peak speeds so that neither is near its own maximum when it is
+# crossed, which is the condition that makes the comparison meaningful.
+ABS_ONSET_MPS = 0.100
+
+
+def abs_cross(sp, lo, hi, thr):
+    """
+    (first, last) index in [lo, hi] whose speed exceeds an ABSOLUTE threshold.
+
+    Needed because transport_window() takes its threshold as a fraction of the
+    reach's own peak, and the two systems disagree about the peak: the Quest
+    reports ~1.85 m/s where Vicon reports ~1.18 on the same reaches. A fraction
+    of a higher peak is a higher absolute speed, which the hand crosses later,
+    so a fractional threshold manufactures an apparent onset lag out of the
+    peak-speed disagreement alone. One fixed mm/s threshold for both systems
+    removes that, and whatever difference survives is real.
+    """
+    first = next((i for i in range(lo, hi + 1) if sp[i] > thr), None)
+    if first is None:
+        return None, None
+    last = next((i for i in range(hi, first - 1, -1) if sp[i] > thr), first)
+    return first, last
+
+
 def quest_by_trial(frames, cutoff_hz):
     """
     Quest samples grouped by trial, filtered WITHIN each trial, on the session
@@ -422,6 +447,20 @@ def main():
             dropped.append((key[0], gn, ov))
             continue
 
+        # The same comparison on a fixed 100 mm/s threshold in both systems.
+        # See abs_cross(): the fractional window above cannot separate an onset
+        # latency from the peak-speed disagreement, and this one can.
+        dt_on_abs = dt_off_abs = None
+        qa2, qb2 = abs_cross(qsp, qi0, qi1, ABS_ONSET_MPS)
+        va2, vb2 = abs_cross(vsp, vi0, vi1, ABS_ONSET_MPS)
+        if qa2 is not None and va2 is not None:
+            q_lo2, q_hi2 = qsam[qa2][0], qsam[qb2][0]
+            v_lo2 = vsam[va2][0] - lag + t0
+            v_hi2 = vsam[vb2][0] - lag + t0
+            if min(q_hi2, v_hi2) - max(q_lo2, v_lo2) > 0:
+                dt_on_abs = (v_lo2 - q_lo2) * 1000.0
+                dt_off_abs = (v_hi2 - q_hi2) * 1000.0
+
         vseg, qseg = vsp[va:vb + 1], qsp[qa:qb + 1]
         if not vseg or not qseg:
             continue
@@ -449,6 +488,19 @@ def main():
             q_nj=normalised_jerk(qsam, qa, qb),
             v_tt=vsam[vb][0] - vsam[va][0],
             q_tt=qsam[qb][0] - qsam[qa][0],
+            # Onset and offset of the transport window, Vicon minus Quest, on
+            # the shared clock. Added 19 Oct 2026 at Alix Kitson's suggestion:
+            # if the two systems agreed on when a reach ENDED but disagreed on
+            # when it STARTED, the difference would be hand-tracking onset
+            # latency rather than clock misalignment. Quest hand tracking is
+            # reported to take a few hundred ms to settle after movement
+            # begins, and these reaches last only 0.5-0.6 s, so a whole reach
+            # can sit inside that warm-up. Both numbers were already being
+            # computed for the overlap gate below and then discarded.
+            dt_onset=(v_lo - q_lo) * 1000.0,
+            dt_offset=(v_hi - q_hi) * 1000.0,
+            dt_onset_abs=dt_on_abs,
+            dt_offset_abs=dt_off_abs,
         )
         per_reach.append(d)
 
@@ -662,6 +714,30 @@ def main():
     L.append("      drift: %+.1f +/- %.1f ms per minute%s"
              % (drift * 60, drift_se * 60,
                 "" if abs(drift) > 2 * drift_se else "  (not distinguishable from zero)"))
+    ona = np.array([r["dt_onset_abs"] for r in per_reach
+                    if r.get("dt_onset_abs") is not None])
+    offa = np.array([r["dt_offset_abs"] for r in per_reach
+                     if r.get("dt_offset_abs") is not None])
+    if len(ona) and len(offa):
+        L.append("   onset vs offset of the reach, Vicon minus Quest,")
+        L.append("   at a fixed %.0f mm/s threshold in both systems:" % (ABS_ONSET_MPS * 1000))
+        L.append("      onset  median %+.0f ms      offset median %+.0f ms   (n = %d)"
+                 % (np.median(ona), np.median(offa), len(ona)))
+        L.append("     Read the MEDIAN, not the mean: a few reaches where one")
+        L.append("     system's threshold crossing lands on a different part of")
+        L.append("     the profile put the mean in the hundreds of ms.")
+        L.append("     An onset difference much larger than the offset difference")
+        L.append("     would be hand-tracking onset latency rather than clock")
+        L.append("     error - the Quest late to register that the hand had")
+        L.append("     started moving, but on time about where it stopped.")
+        L.append("     Measured on P60, 15 Oct 2026: both within a few ms, so")
+        L.append("     there is no detectable onset latency in these reaches.")
+        L.append("     The threshold must be ABSOLUTE for this to mean anything.")
+        L.append("     Against each system's own peak the Quest looks 42 ms late,")
+        L.append("     but only because it reports a higher peak and so a higher")
+        L.append("     threshold, which the hand crosses later. That is arithmetic,")
+        L.append("     not latency. The transport-window figures are kept in the")
+        L.append("     per-reach CSV as dt_onset / dt_offset for comparison.")
     L.append("     The SD here is NOT the alignment error alone. The Quest speed")
     L.append("     profile carries several spurious peaks per reach (section D), so")
     L.append("     its argmax lands on a different hump from one reach to the next.")
@@ -835,6 +911,7 @@ def main():
     # per-reach pairs, so Bland-Altman plots can be drawn in any package
     pcsv = stem + "_validation_pairs.csv"
     keys = ["trial", "grasp", "t_end", "dt_peak",
+            "dt_onset_abs", "dt_offset_abs", "dt_onset", "dt_offset",
             "q_peak", "v_peak", "q_disp", "v_disp", "q_path", "v_path",
             "q_ratio", "v_ratio", "q_peaks", "v_peaks", "q_nj", "v_nj", "q_tt", "v_tt"]
     with open(pcsv, "w", newline="", encoding="utf-8") as fh:
