@@ -1820,10 +1820,11 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   showInHeadset: 1
   distance: 1
-  heightOffset: 0.4
+  heightOffset: 0.75
   textSize: 0.9
   showLogMessages: 1
-  logLines: 6
+  logLines: 3
+  hideDuringTrial: 1
 --- !u!114 &365879015
 MonoBehaviour:
   m_ObjectHideFlags: 0

@@ -30,6 +30,13 @@ public class VRStatusDisplay : MonoBehaviour
     public bool showLogMessages = true;
     [Range(1, 12)] public int logLines = 4;
 
+    [Tooltip("Hide the panel while a trial is actually running, and show it again between " +
+             "trials. Leave ON. The panel sits at 1 m and the target grid at 0.45 m, so it " +
+             "renders behind the top row of targets and clutters exactly the part of the " +
+             "view the participant is reaching into. Between trials there is nothing to " +
+             "occlude and the experimenter needs to read it.")]
+    public bool hideDuringTrial = true;
+
     private TextMeshPro _text;
     private Transform _head;
     private readonly List<string> _log = new List<string>();
@@ -137,8 +144,15 @@ public class VRStatusDisplay : MonoBehaviour
     {
         if (_text == null) return;
 
-        _text.gameObject.SetActive(showInHeadset);
-        if (!showInHeadset) return;
+        // Out of the way during the reach itself, back between trials.
+        bool inTrial = _sessionRunner != null
+                    && _sessionRunner.sessionPlanned
+                    && !_sessionRunner.waitingToStartTrial
+                    && _sessionRunner.currentBlock != "COMPLETE";
+        bool show = showInHeadset && !(hideDuringTrial && inTrial);
+
+        _text.gameObject.SetActive(show);
+        if (!show) return;
 
         if (_head == null) ResolveHead();
 
