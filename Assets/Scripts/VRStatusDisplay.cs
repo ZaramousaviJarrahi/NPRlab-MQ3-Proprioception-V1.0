@@ -35,6 +35,8 @@ public class VRStatusDisplay : MonoBehaviour
     private readonly List<string> _log = new List<string>();
 
     private SessionRunner _sessionRunner;
+
+    private HandVisibilityToggle _handVisibility;
     private TrialCounter _trialCounter;
     private TaskSequencer _taskSequencer;
     private DataRecorder _dataRecorder;
@@ -44,6 +46,7 @@ public class VRStatusDisplay : MonoBehaviour
     void Start()
     {
         _sessionRunner = GetComponent<SessionRunner>();
+        _handVisibility = GetComponent<HandVisibilityToggle>();
         _trialCounter  = GetComponent<TrialCounter>();
         _taskSequencer = GetComponent<TaskSequencer>();
         _dataRecorder  = GetComponent<DataRecorder>();
@@ -162,6 +165,30 @@ public class VRStatusDisplay : MonoBehaviour
         bool started = _mode != null && _mode.IsExperimentStarted();
 
         s.AppendLine($"<b>{who}   Visit {visit}</b>   {(started ? "RUNNING" : "not started - press X")}");
+
+        // Hand visibility on its own line, directly under the header, because during a
+        // Visit 3 check this is the single thing being looked at and hunting for it among
+        // six scrolling log lines in a headset is genuinely hard. Colour-coded so it reads
+        // at a glance without parsing numbers: green = hands shown, cyan = properly hidden,
+        // red = the hide did not work and the data would be worthless.
+        if (_handVisibility != null)
+        {
+            if (_handVisibility.handsVisible)
+            {
+                s.AppendLine("<b>HANDS: <color=#7CFC00>VISIBLE</color></b>   (B to hide)");
+            }
+            else if (_handVisibility.visualsForcedOff > 0)
+            {
+                s.AppendLine($"<b>HANDS: <color=#00E5FF>HIDDEN</color></b>   " +
+                             $"{_handVisibility.visualsForcedOff} visuals + " +
+                             $"{_handVisibility.renderersDisabled} renderers   (B to show)");
+            }
+            else
+            {
+                s.AppendLine("<b><color=red>HANDS: HIDE FAILED - still visible. " +
+                             "Do not collect.</color></b>");
+            }
+        }
 
         if (_sessionRunner != null)
         {
