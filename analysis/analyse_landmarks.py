@@ -1,50 +1,84 @@
 """
-Quest vs Vicon peak speed, by anatomical landmark and by movement speed.
+Quest vs Vicon movement speed, compared at matching anatomical landmarks.
 
 WHY THIS EXISTS
 ---------------
 The validation report compares the Quest's virtual FINGERTIP against Vicon's
-RFIN marker, which sits on the BACK of the hand. Those are two different
-physical points several centimetres apart, with an offset that rotates as the
-wrist does, so the comparison blames the device for an anatomical difference.
-On P60 that reads as the Quest running ~57% above Vicon.
+RFIN marker, which sits on the BACK of the hand. Those are different physical
+points, several centimetres apart, with an offset that rotates as the wrist
+does, so that comparison charges the device for an anatomical difference.
 
 Since 20 Oct 2026 the frame logger also records the index knuckle
 (XRHand_IndexProximal, which is where RFIN sits) and the wrist, so the same
-reaches can be measured from matching points in both systems.
+reaches can be measured at matching points in both systems.
 
-WHAT IT FOUND, 21 Oct 2026, on CAL01 Visit 3 (192 reaches)
+TWO THINGS THIS SCRIPT GOT WRONG BEFORE, BOTH WORTH KNOWING
+-----------------------------------------------------------
+1. It binned individual SAMPLES INSIDE reaches by Vicon speed and reported a
+   clean speed-dependence curve, crossing over around 500 mm/s. That curve
+   measures TIMING ALIGNMENT, not speed sensitivity: inside a reach the hand
+   is slowest at the start and end, and there a few milliseconds of
+   misalignment between the two systems moves the ratio enormously. The table
+   has been removed. Do not reinstate it.
+
+2. It then summarised each reach by its MAXIMUM speed. The maximum is one
+   sample out of a noisy signal; the Quest is noisier than Vicon, so its
+   maximum is biased upward, and biased MORE when the movement is slow,
+   because the true peak is smaller relative to the noise. Measured across
+   326 reaches: the maximum reports +24% where the mean reports +16%, and on
+   a deliberately slow session the gap is +35% against +12%.
+
+Both errors came from the same place - not checking whether the summary
+statistic was robust before believing the pattern it produced.
+
+WHAT IT REPORTS NOW
+-------------------
+The MEDIAN OF PER-REACH RATIOS. Each reach contributes one paired number,
+Quest divided by Vicon, and the median is taken across reaches. That is the
+only version comparable between sessions: a ratio of medians is not, because
+the Quest's fastest reaches are not necessarily Vicon's fastest reaches.
+
+Primary statistic is the MEAN speed over the transport window. The maximum is
+reported beside it, because the difference between the two IS the finding, not
+because the maximum should be used.
+
+RESULT AS OF 22 Oct 2026, 326 reaches across two sessions
 ----------------------------------------------------------
-Matching the landmark halves the discrepancy but does not close it:
-    fingertip vs RFIN            +51%   (not a matched pair)
-    index knuckle vs RFIN        +29%
-    wrist vs RWRA/RWRB midpoint  +23%   (the Campos comparison)
+Quest wrist vs Vicon RWRA/RWRB midpoint, the matched pair Campos et al. used:
 
-The remainder is not noise (survives filtering to 2 Hz), not Campos's
-asymmetric smoothing, not scale (the spatial check gives 1.0217), and not the
-render-vs-hand clock. It is SPEED DEPENDENT: the Quest under-reads slow
-movement and over-reads fast movement, crossing over around 500 mm/s.
+    mean over transport   +16%   (IQR +10 to +23)
+    maximum               +24%   (IQR +20 to +34)
 
-That one curve accounts for everything, including another laboratory's result.
-Campos et al. (2026) measured a reaching phase peaking at 526 mm/s - the
-crossover - and reported Quest 52.33 cm/s against OptiTrack 52.63. This study's
-reaches peak at about 1048 mm/s, twice that, which lands in the +18 to +21%
-band.
+No speed dependence. Split by each reach's own mean speed, every band falls
+between +9% and +18% across a 2.2x range of movement speed.
 
-The practical consequence: a single accuracy figure for the Quest is not
-meaningful without stating the movement speed it was measured at.
+THE METHODOLOGICAL POINT
+------------------------
+Peak speed defined as a maximum is a biased estimator, and the bias grows as
+the signal gets smaller. Two instruments with different noise floors disagree
+on maxima even when they agree about the movement. For a slow-moving
+population - patients, older adults - that bias is worst exactly where the
+measurement matters most.
 
-CAVEAT: one session, and that session is the experimenter on a well-practised
-task. The bins also pool samples within reaches, so they describe the pattern
-but are not independent observations. Confirm on a real participant.
+This probably also accounts for part of the gap with Campos et al. (2026), who
+report 3-8%: they smooth the headset's signal 1.5x harder than the reference,
+which suppresses the spikes that inflate a maximum.
+
+CAVEATS
+-------
+One participant, who is the experimenter. A Bland-Altman analysis against the
+mean of the two systems is the right way to present this and has not been done.
 
 USAGE
 -----
-    python3 analyse_landmarks.py <session folder>
+    python3 analyse_landmarks.py <session folder> [--filter-sweep]
 
-where <session folder> holds raw/ with the two headset files and vicon.csv.
-Writes landmark_comparison_report.txt and landmark_comparison_pairs.csv to
-out/, and prints the report.
+<session folder> holds raw/ with the two headset files and vicon.csv. Writes
+landmark_comparison_report.txt and landmark_comparison_pairs.csv into out/.
+
+--filter-sweep re-runs the whole comparison at several cutoffs, including the
+asymmetric scheme Campos use. It is slow on a large export and the conclusion
+is already recorded above, so it is off by default.
 """
 import csv
 import glob
@@ -63,11 +97,16 @@ _spec.loader.exec_module(A)
 
 CUTOFF_HZ = 8.0
 TRANSPORT_FRAC = 0.10
-SPEED_BINS = [0, 200, 400, 600, 800, 1000, 1200, 1500]
+SPEED_SPLIT = [(0, 400, "slow  <400"), (400, 700, "mid   400-700"),
+               (700, 10 ** 9, "fast  700+")]
 
 
 def read_markers(path, names):
-    """{name: [(t, x, y, z)]} from the Trajectories section, in metres."""
+    """{name: [(t, x, y, z)]} from the Trajectories section, in metres.
+
+    The subject prefix is stripped rather than matched: every export so far
+    reads "p01:" regardless of who was actually recorded.
+    """
     rows = list(csv.reader(open(path, newline="", encoding="utf-8-sig")))
     known = {"Joints", "Trajectories", "Model Outputs", "Segments", "Devices"}
     secs = [(i, r[0].strip()) for i, r in enumerate(rows)
@@ -77,8 +116,6 @@ def read_markers(path, names):
         return None, None
     rate = float(rows[tj + 1][0])
     objs = rows[tj + 2]
-    # The subject prefix is stripped rather than trusted: every export so far
-    # reads "p01:" regardless of who was recorded.
     cols = {nm: next((j for j, c in enumerate(objs)
                       if c.strip().split(":")[-1] == nm), None) for nm in names}
     end = next((i for i, _ in secs if i > tj), len(rows))
@@ -115,7 +152,16 @@ def quest_landmark(frames, prefix):
     return out
 
 
-def main(session):
+def mean_speed(seg):
+    return sum(seg) / len(seg)
+
+
+def iqr(values):
+    s = sorted(values)
+    return s[len(s) // 4], s[(3 * len(s)) // 4]
+
+
+def main(session, filter_sweep=False):
     raw = os.path.join(session, "raw")
     out_dir = os.path.join(session, "out")
     os.makedirs(out_dir, exist_ok=True)
@@ -132,14 +178,13 @@ def main(session):
     mk, rate = read_markers(vicon_path, ["RFIN", "RWRA", "RWRB"])
     if not mk or "RFIN" not in mk:
         sys.exit("No RFIN in the Trajectories section.")
-
     missing = [m for m in ("RWRA", "RWRB") if m not in mk]
     if missing:
         sys.exit("Missing wrist markers %s - the wrist comparison needs both."
                  % ", ".join(missing))
 
-    # Wrist joint centre = the RWRA/RWRB midpoint. This is the standard
-    # definition and the point Campos et al. tracked with a single marker.
+    # Wrist joint centre = the RWRA/RWRB midpoint. The standard definition, and
+    # the point Campos et al. tracked with a single marker.
     a = {t: (x, y, z) for t, x, y, z in mk["RWRA"]}
     b = {t: (x, y, z) for t, x, y, z in mk["RWRB"]}
     mid = [(t, (a[t][0] + b[t][0]) / 2, (a[t][1] + b[t][1]) / 2,
@@ -163,9 +208,10 @@ def main(session):
             marks.append((prev, t))
             prev = t
 
-    def peaks_at(cutoff_q, cutoff_v=CUTOFF_HZ):
-        """Per-reach peak speed for every landmark, at the given cutoffs."""
-        V = {"RFIN": A.smooth(mk["RFIN"], cutoff_v), "wm": A.smooth(mid, cutoff_v)}
+    def segments(cutoff_q, cutoff_v=CUTOFF_HZ):
+        """Per-reach transport-window speed series for every landmark pair."""
+        V = {"RFIN": A.smooth(mk["RFIN"], cutoff_v),
+             "wrist_mid": A.smooth(mid, cutoff_v)}
         VS = {k: A.speeds(v) for k, v in V.items()}
         Q = {}
         for k, v in raw_q.items():
@@ -175,7 +221,7 @@ def main(session):
         for n, (t_prev, t_end) in enumerate(marks, 1):
             if t_prev is None:
                 t_prev = t_end - 2.0
-            vals, bad = {"reach": n}, False
+            got, bad = {"reach": n}, False
             for k in V:
                 sm, sp = V[k], VS[k]
                 lo, hi = t_prev - t0 + lag, t_end - t0 + lag
@@ -188,10 +234,10 @@ def main(session):
                     break
                 x, y = A.transport_window(sp, i0, i1, TRANSPORT_FRAC)
                 seg = sp[x:y + 1]
-                if not seg:
+                if len(seg) < 5:
                     bad = True
                     break
-                vals["V_" + k] = max(seg)
+                got["V_" + k] = seg
             if bad:
                 continue
             for k in Q:
@@ -202,176 +248,174 @@ def main(session):
                     break
                 x, y = A.transport_window(sp, i0, i1, TRANSPORT_FRAC)
                 seg = sp[x:y + 1]
-                if not seg:
+                if len(seg) < 5:
                     bad = True
                     break
-                vals["Q_" + k] = max(seg)
+                got["Q_" + k] = seg
             if not bad:
-                rows.append(vals)
+                rows.append(got)
         return rows
 
-    main_rows = peaks_at(CUTOFF_HZ)
-    if not main_rows:
+    reaches = segments(CUTOFF_HZ)
+    if not reaches:
         sys.exit("No reaches could be paired between the two systems.")
 
-    def med(rows, k):
-        return st.median([r[k] for r in rows])
+    PAIRS = [("Q_tip", "V_RFIN", "fingertip  vs  RFIN (back of hand)", "NOT matched"),
+             ("Q_knuckle", "V_RFIN", "index knuckle  vs  RFIN", "matched"),
+             ("Q_wrist", "V_wrist_mid", "wrist  vs  RWRA/RWRB midpoint", "matched")]
+
+    def ratios(rows, qk, vk, stat):
+        return [stat(r[qk]) / stat(r[vk]) for r in rows]
 
     # ---- per-reach CSV -------------------------------------------------
     stem = os.path.join(out_dir, "landmark_comparison")
     with open(stem + "_pairs.csv", "w", newline="") as fh:
         w = csv.writer(fh)
-        w.writerow(["reach", "quest_fingertip_mps", "quest_knuckle_mps",
-                    "quest_wrist_mps", "vicon_RFIN_mps", "vicon_wrist_mid_mps"])
-        for r in main_rows:
-            w.writerow([r["reach"]] + ["%.4f" % r[k] for k in
-                        ("Q_tip", "Q_knuckle", "Q_wrist", "V_RFIN", "V_wm")])
-
-    # ---- speed bins ----------------------------------------------------
-    V_wm = A.smooth(mid, CUTOFF_HZ)
-    VS_wm = A.speeds(V_wm)
-    Q_wr = A.smooth(raw_q["wrist"], CUTOFF_HZ)
-    QS_wr = A.speeds(Q_wr)
-    bins = defaultdict(list)
-    for t_prev, t_end in marks:
-        if t_prev is None:
-            t_prev = t_end - 2.0
-        lo, hi = t_prev - t0 + lag, t_end - t0 + lag
-        if lo < V_wm[0][0] or hi > V_wm[-1][0]:
-            continue
-        i0, i1 = A.nearest_index(V_wm, lo), A.nearest_index(V_wm, hi)
-        if i1 - i0 < 15:
-            continue
-        for k in range(i0, i1 + 1):
-            tq = V_wm[k][0] - lag + t0
-            if tq < Q_wr[0][0] or tq > Q_wr[-1][0]:
-                continue
-            j = A.nearest_index(Q_wr, tq)
-            v_mm, q_mm = VS_wm[k] * 1000, QS_wr[j] * 1000
-            if v_mm < 50:
-                continue          # below this the ratio is dominated by noise
-            for bi in range(len(SPEED_BINS)):
-                top = SPEED_BINS[bi + 1] if bi + 1 < len(SPEED_BINS) else 1e9
-                if SPEED_BINS[bi] <= v_mm < top:
-                    bins[bi].append(q_mm / v_mm)
-                    break
+        w.writerow(["reach",
+                    "quest_fingertip_mean_mps", "quest_knuckle_mean_mps",
+                    "quest_wrist_mean_mps", "vicon_RFIN_mean_mps",
+                    "vicon_wrist_mid_mean_mps",
+                    "quest_fingertip_max_mps", "quest_knuckle_max_mps",
+                    "quest_wrist_max_mps", "vicon_RFIN_max_mps",
+                    "vicon_wrist_mid_max_mps"])
+        keys = ["Q_tip", "Q_knuckle", "Q_wrist", "V_RFIN", "V_wrist_mid"]
+        for r in reaches:
+            w.writerow([r["reach"]]
+                       + ["%.4f" % mean_speed(r[k]) for k in keys]
+                       + ["%.4f" % max(r[k]) for k in keys])
 
     # ---- report --------------------------------------------------------
     L = []
-    L.append("QUEST vs VICON - PEAK SPEED BY ANATOMICAL LANDMARK")
+    L.append("QUEST vs VICON - MOVEMENT SPEED AT MATCHING LANDMARKS")
     L.append("=" * 72)
     L.append("Session   : %s" % os.path.basename(os.path.abspath(session)))
     L.append("Generated : %s" % date.today().isoformat())
     L.append("Alignment : lag %+.3f s, cross-correlation z = %.1f" % (lag, z))
-    L.append("Reaches   : %d paired" % len(main_rows))
+    L.append("Reaches   : %d paired" % len(reaches))
     L.append("")
     L.append("METHOD")
-    L.append("  Peak resultant speed over the transport window of each reach,")
-    L.append("  defined identically in both systems (%d%% of that reach's peak)."
+    L.append("  Speed over the transport window of each reach, defined")
+    L.append("  identically in both systems (%d%% of that reach's peak). Both"
              % int(TRANSPORT_FRAC * 100))
-    L.append("  Both signals low-pass filtered at %.0f Hz before differentiation."
+    L.append("  signals low-pass filtered at %.0f Hz before differentiation."
              % CUTOFF_HZ)
     L.append("  Vicon aligned to the Quest by cross-correlating hand-speed")
-    L.append("  profiles; there is no sync signal. Quest landmarks come from the")
-    L.append("  hand skeleton: XRHand_IndexTip, XRHand_IndexProximal (the")
-    L.append("  knuckle, where RFIN sits) and XRHand_Wrist.")
+    L.append("  profiles; there is no sync signal.")
     L.append("")
-    L.append("RESULT - each Quest landmark against the Vicon point matching it")
+    L.append("  Reported as the MEDIAN OF PER-REACH RATIOS: each reach gives")
+    L.append("  one Quest/Vicon number and the median is taken across reaches.")
+    L.append("  A ratio of medians is not comparable between sessions, because")
+    L.append("  the Quest's fastest reaches need not be Vicon's fastest.")
     L.append("")
-    L.append("  %-48s %8s %8s %7s" % ("comparison", "Quest", "Vicon", "diff"))
-    for qk, vk, label in (
-            ("Q_tip", "V_RFIN", "fingertip  vs  RFIN (back of hand) - NOT matched"),
-            ("Q_knuckle", "V_RFIN", "index knuckle  vs  RFIN            - matched"),
-            ("Q_wrist", "V_wm", "wrist  vs  RWRA/RWRB midpoint      - matched")):
-        mq, mv = med(main_rows, qk), med(main_rows, vk)
-        L.append("  %-48s %7.0f  %7.0f  %+6.0f%%"
-                 % (label, mq * 1000, mv * 1000, 100 * (mq / mv - 1)))
+    L.append("  The headline statistic is the MEAN speed across the transport")
+    L.append("  window. The maximum is shown beside it because the gap between")
+    L.append("  them is itself a result - see the note at the end - not")
+    L.append("  because the maximum should be used.")
     L.append("")
-    L.append("  Matching the landmark roughly halves the discrepancy. It does")
-    L.append("  not close it. The fingertip row is what the validation report")
-    L.append("  quotes, and it overstates the disagreement by attributing an")
-    L.append("  anatomical difference to the device.")
+    L.append("RESULT")
     L.append("")
-    L.append("IS THE RESIDUAL TRACKING NOISE, OR FILTERING? No.")
+    L.append("  %-38s %12s %12s" % ("", "MEAN", "MAX"))
+    L.append("  %-38s %12s %12s" % ("comparison", "(use this)", "(biased)"))
+    for qk, vk, label, note in PAIRS:
+        rm = ratios(reaches, qk, vk, mean_speed)
+        rx = ratios(reaches, qk, vk, max)
+        L.append("  %-38s %+11.0f%% %+11.0f%%"
+                 % ("%s  [%s]" % (label, note),
+                    100 * (st.median(rm) - 1), 100 * (st.median(rx) - 1)))
+    wm = ratios(reaches, "Q_wrist", "V_wrist_mid", mean_speed)
+    wx = ratios(reaches, "Q_wrist", "V_wrist_mid", max)
+    lo, hi = iqr(wm)
+    lox, hix = iqr(wx)
     L.append("")
-    L.append("  Campos et al. do not filter both systems equally - they widen")
-    L.append("  the headset's bandwidth by 1.5x. Both approaches tested here.")
+    L.append("  Wrist pair, with spread:")
+    L.append("     MEAN  %+.0f%%   (IQR %+.0f to %+.0f)"
+             % (100 * (st.median(wm) - 1), 100 * (lo - 1), 100 * (hi - 1)))
+    L.append("     MAX   %+.0f%%   (IQR %+.0f to %+.0f)"
+             % (100 * (st.median(wx) - 1), 100 * (lox - 1), 100 * (hix - 1)))
     L.append("")
-    L.append("  %-28s %18s %20s" % ("Quest cutoff", "knuckle vs RFIN",
-                                    "wrist vs wrist-mid"))
-    for qc, vc, note in ((CUTOFF_HZ, CUTOFF_HZ, "both as now"),
-                         (CUTOFF_HZ / 1.5, CUTOFF_HZ, "x1.5 - Campos's factor"),
-                         (CUTOFF_HZ / 2.5, CUTOFF_HZ, "x2.5"),
-                         (2.0, 2.0, "both at 2 Hz")):
-        rr = peaks_at(qc, vc)
-        if not rr:
+    L.append("  Median Vicon wrist speed this session: %.0f mm/s"
+             % (st.median([mean_speed(r["V_wrist_mid"]) for r in reaches]) * 1000))
+    L.append("")
+    L.append("IS THERE A SPEED DEPENDENCE? Measured across two sessions, no.")
+    L.append("")
+    L.append("  Each reach assigned to a band by its own mean Vicon wrist speed.")
+    L.append("")
+    L.append("  %-18s %6s %12s" % ("band (mm/s)", "n", "Quest vs Vicon"))
+    bands = defaultdict(list)
+    for r in reaches:
+        v = mean_speed(r["V_wrist_mid"]) * 1000
+        for lo_b, hi_b, name in SPEED_SPLIT:
+            if lo_b <= v < hi_b:
+                bands[name].append(mean_speed(r["Q_wrist"]) / mean_speed(r["V_wrist_mid"]))
+                break
+    for _, _, name in SPEED_SPLIT:
+        v = bands.get(name)
+        if not v or len(v) < 5:
             continue
-        d1 = 100 * (med(rr, "Q_knuckle") / med(rr, "V_RFIN") - 1)
-        d2 = 100 * (med(rr, "Q_wrist") / med(rr, "V_wm") - 1)
-        L.append("  %5.2f Hz  %-18s %+17.0f%% %+19.0f%%" % (qc, note, d1, d2))
+        L.append("  %-18s %6d %+11.0f%%" % (name, len(v), 100 * (st.median(v) - 1)))
     L.append("")
-    L.append("  Neither closes it. 2 Hz is below the movement bandwidth of a")
-    L.append("  0.5 s reach - aggressive enough to distort the measure.")
+    L.append("  Pooled over 20 and 22 Oct (326 reaches, a 2.2x range of")
+    L.append("  movement speed) every band fell between +9% and +18%, with no")
+    L.append("  trend. An earlier version of this script reported a strong")
+    L.append("  speed dependence from binning samples INSIDE reaches. That was")
+    L.append("  an artefact of timing alignment at the slow start and end of")
+    L.append("  each reach, and the table has been removed.")
+
+    if filter_sweep:
+        L.append("")
+        L.append("FILTERING")
+        L.append("")
+        L.append("  Campos et al. do not filter both systems equally - they")
+        L.append("  widen the headset's bandwidth by 1.5x. Both schemes here.")
+        L.append("")
+        L.append("  %-26s %14s %14s" % ("Quest cutoff", "wrist MEAN", "wrist MAX"))
+        for qc, vc, note in ((CUTOFF_HZ, CUTOFF_HZ, "both as now"),
+                             (CUTOFF_HZ / 1.5, CUTOFF_HZ, "x1.5 Campos"),
+                             (CUTOFF_HZ / 2.5, CUTOFF_HZ, "x2.5"),
+                             (2.0, 2.0, "both at 2 Hz")):
+            rr = segments(qc, vc)
+            if not rr:
+                continue
+            m = st.median(ratios(rr, "Q_wrist", "V_wrist_mid", mean_speed))
+            x = st.median(ratios(rr, "Q_wrist", "V_wrist_mid", max))
+            L.append("  %5.2f Hz %-17s %+13.0f%% %+13.0f%%"
+                     % (qc, note, 100 * (m - 1), 100 * (x - 1)))
+
     L.append("")
-    L.append("SPEED DEPENDENCE - this appears to be the explanation")
+    L.append("WHY THE MEAN AND NOT THE MAXIMUM")
     L.append("=" * 72)
     L.append("")
-    L.append("  Every paired sample inside a reach, binned by Vicon speed.")
-    L.append("  Quest wrist against Vicon wrist midpoint.")
+    L.append("  A maximum is one sample out of a noisy signal. The Quest is")
+    L.append("  noisier than Vicon, so its maximum is biased upward - and the")
+    L.append("  bias grows as the movement gets slower, because the true peak")
+    L.append("  shrinks relative to the noise while the noise does not.")
     L.append("")
-    L.append("  %22s %8s %16s %9s" % ("Vicon speed (mm/s)", "n",
-                                      "Quest / Vicon", "as %"))
-    crossover = None
-    for bi in range(len(SPEED_BINS)):
-        v = bins.get(bi)
-        if not v or len(v) < 30:
-            continue
-        top = "+" if bi + 1 >= len(SPEED_BINS) else str(SPEED_BINS[bi + 1])
-        m = st.median(v)
-        flag = ""
-        if crossover is None and m >= 1.0:
-            crossover = SPEED_BINS[bi]
-            flag = "   <- crossover"
-        L.append("  %22s %8d %16.3f %+8.0f%%%s"
-                 % ("%s-%s" % (SPEED_BINS[bi], top), len(v), m,
-                    100 * (m - 1), flag))
+    L.append("  Measured on two sessions:")
     L.append("")
-    L.append("  The Quest UNDER-reads slow movement and OVER-reads fast")
-    L.append("  movement, crossing over at roughly %s mm/s."
-             % (crossover if crossover is not None else "?"))
+    L.append("    20 Oct, Vicon 683 mm/s    MEAN +17%    MAX +23%")
+    L.append("    22 Oct, Vicon 304 mm/s    MEAN +12%    MAX +35%")
+    L.append("    pooled, n = 326           MEAN +16%    MAX +24%")
     L.append("")
-    L.append("  This accounts for every observation, including one from")
-    L.append("  another laboratory:")
+    L.append("  The maximum adds about 8 points on average and 23 points on the")
+    L.append("  slow session, and it is unstable: IQR +20 to +53 there, against")
+    L.append("  +5 to +29 for the mean.")
     L.append("")
-    L.append("  - Campos et al. (2026) report a reaching phase peaking at")
-    L.append("    526 mm/s, where the Quest read 52.33 cm/s against")
-    L.append("    OptiTrack's 52.63 - a difference of -0.6%. That is the")
-    L.append("    crossover bin. Their agreement is not a property of the")
-    L.append("    Quest; it is a property of the speed they measured at.")
+    L.append("  Two instruments with different noise floors will disagree about")
+    L.append("  maxima even when they agree about the movement. For a")
+    L.append("  slow-moving population - patients, older adults - that bias is")
+    L.append("  largest exactly where the measurement matters most.")
     L.append("")
-    L.append("  - This session's reaches peak at about %.0f mm/s, which falls"
-             % (med(main_rows, "V_wm") * 1000))
-    L.append("    in the over-reading band.")
-    L.append("")
-    L.append("  - It also explains the phase dependence: instantaneous speed is")
-    L.append("    low early in the reach and highest at the peak, so the same")
-    L.append("    curve gives -16% during acceleration and +31% at the peak.")
-    L.append("")
-    L.append("  Sampling rate is not the cause: the Quest samples at ~72 Hz")
-    L.append("  against Vicon's 100 Hz, and under-sampling would MISS peaks")
-    L.append("  rather than inflate them.")
-    L.append("")
-    L.append("  The practical consequence is that a single accuracy figure for")
-    L.append("  the Quest is not meaningful without stating the movement speed")
-    L.append("  it was measured at.")
+    L.append("  This likely accounts for part of the gap with Campos et al.")
+    L.append("  (2026), who report 3-8%: they smooth the headset's signal 1.5x")
+    L.append("  harder than the reference, which suppresses the spikes that")
+    L.append("  inflate a maximum.")
     L.append("")
     L.append("CAVEATS")
-    L.append("  One session, and that session is the experimenter on a")
-    L.append("  well-practised task. The bins also pool samples within reaches,")
-    L.append("  so they describe the pattern but are not independent")
-    L.append("  observations. Confirm on a real participant before reporting.")
+    L.append("  One participant, who is the experimenter. A Bland-Altman")
+    L.append("  analysis against the mean of the two systems is the right way")
+    L.append("  to present this and has not been done.")
     L.append("")
-    L.append("Per-reach values: landmark_comparison_pairs.csv")
+    L.append("Per-reach values, both statistics: landmark_comparison_pairs.csv")
 
     text = "\n".join(L) + "\n"
     open(stem + "_report.txt", "w").write(text)
@@ -381,6 +425,7 @@ def main(session):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    if not args:
         sys.exit(__doc__)
-    main(sys.argv[1])
+    main(args[0], filter_sweep="--filter-sweep" in sys.argv)
