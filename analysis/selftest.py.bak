@@ -1,0 +1,333 @@
+"""
+Independent checks on a processed session. Run this to satisfy yourself the
+pipeline did what it claims, WITHOUT reading the analysis code.
+
+    python3 selftest.py ~/NPRlab-Data/P60/Visit1_2026-10-15
+
+WHY THIS EXISTS, AND WHY IT IS NOT A UNIT TEST
+-----------------------------------------------
+Reading analysis code is a weak way to check it. Code can read perfectly and
+still compute the wrong quantity: in October 2026 this project shipped a
+reaction-time measure that read the warning tone instead of the cue, and two
+versions of a landmark comparison that each produced a clean, plausible,
+wrong pattern. Every one of them looked fine on the page.
+
+What catches that is recomputing the answer a DIFFERENT WAY and comparing. So
+every check below is deliberately computed from the raw columns by simple
+arithmetic, not by calling the analysis functions. If a check passes, the
+pipeline and this file agree by two independent routes. If one fails, at least
+one of them is wrong and it is worth finding out which.
+
+These are not exhaustive. They cover the measures the study depends on most.
+
+WHAT EACH CHECK WOULD CATCH
+---------------------------
+ 1  endpoint error     a units error, an axis mix-up, wrong target lookup
+ 2  error decomposition the lateral/depth split not summing to the total
+ 3  CE/VE/RE identity  a wrong formula in the accuracy table
+ 4  nearest target     grasps attributed to the wrong target
+ 5  trial structure    a plan that did not build as specified
+ 6  timing sanity      reaction time longer than the trial, negative durations
+ 7  cross-system       the two instruments disagreeing about where the hand was
+ 8  shuffle test       a check that cannot actually detect the thing it checks
+"""
+import csv
+import glob
+import math
+import os
+import random
+import statistics as st
+import sys
+from collections import Counter, defaultdict
+
+PASS, FAIL, WARN, SKIP = "PASS", "FAIL", "WARN", "skip"
+results = []
+
+
+def report(name, status, detail=""):
+    results.append((name, status, detail))
+    tag = {PASS: "  PASS ", FAIL: "* FAIL ", WARN: "  warn ", SKIP: "  ---- "}[status]
+    print("%s %-38s %s" % (tag, name, detail))
+
+
+def num(row, key):
+    v = (row.get(key) or "").strip()
+    if not v:
+        return None
+    try:
+        return float(v)
+    except ValueError:
+        return None
+
+
+def load(session):
+    out = os.path.join(session, "out")
+    g = glob.glob(os.path.join(out, "*_grasps.csv"))
+    a = glob.glob(os.path.join(out, "*_accuracy.csv"))
+    if not g:
+        sys.exit("No *_grasps.csv in %s - run run-session.sh first." % out)
+    grasps = list(csv.DictReader(open(g[0])))
+    acc = list(csv.DictReader(open(a[0]))) if a else []
+    return grasps, acc
+
+
+# ---------------------------------------------------------------- 1
+def check_endpoint(grasps):
+    """Recompute endpoint error straight from the target and fingertip columns.
+
+    This is the study's primary measure. Here it is just Pythagoras on six
+    numbers that are all in the file, which is about as independent of the
+    pipeline as a check can be.
+    """
+    bad, n, worst = [], 0, 0.0
+    for r in grasps:
+        if (r.get("grasp_outcome") or "").strip() != "recorded":
+            continue
+        t = [num(r, "target_%s" % k) for k in "xyz"]
+        f = [num(r, "fingertip_%s" % k) for k in "xyz"]
+        rep = num(r, "endpoint_error_m")
+        if None in t or None in f or rep is None:
+            continue
+        mine = math.dist(t, f)
+        n += 1
+        d = abs(mine - rep)
+        worst = max(worst, d)
+        if d > 1e-4:
+            bad.append((r.get("trial_number"), rep, mine))
+    if n == 0:
+        return report("endpoint error recomputed", SKIP, "no usable rows")
+    if bad:
+        return report("endpoint error recomputed", FAIL,
+                      "%d of %d differ, e.g. file %.5f vs mine %.5f"
+                      % (len(bad), n, bad[0][1], bad[0][2]))
+    report("endpoint error recomputed", PASS,
+           "%d grasps, worst difference %.2g m" % (n, worst))
+
+
+# ---------------------------------------------------------------- 2
+def check_decomposition(grasps):
+    """lateral^2 + depth^2 should equal the radial (uncorrected) error."""
+    bad, n, worst = 0, 0, 0.0
+    for r in grasps:
+        if (r.get("grasp_outcome") or "").strip() != "recorded":
+            continue
+        lat, dep, rad = (num(r, "lateral_error_m"), num(r, "depth_offset_m"),
+                         num(r, "endpoint_error_m"))
+        if None in (lat, dep, rad):
+            continue
+        n += 1
+        d = abs(math.hypot(lat, dep) - rad)
+        worst = max(worst, d)
+        if d > 1e-4:
+            bad += 1
+    if n == 0:
+        return report("lateral/depth split adds up", SKIP, "columns absent")
+    if bad:
+        return report("lateral/depth split adds up", FAIL,
+                      "%d of %d rows do not satisfy lat^2+dep^2 = total^2" % (bad, n))
+    report("lateral/depth split adds up", PASS,
+           "%d grasps, worst difference %.2g m" % (n, worst))
+
+
+# ---------------------------------------------------------------- 3
+def check_identity(acc):
+    """RMS^2 = CE^2 + VE^2. A mathematical fact, not a modelling choice."""
+    if not acc:
+        return report("CE/VE/RE identity", SKIP, "no accuracy table")
+    bad, n, worst = 0, 0, 0.0
+    for r in acc:
+        ce, ve, col = num(r, "CE_m"), num(r, "VE_m"), (r.get("check_rms_vs_CE_VE") or "")
+        if ce is None or ve is None or "vs" not in col:
+            continue
+        try:
+            rms = float(col.split("vs")[0].strip())
+        except ValueError:
+            continue
+        n += 1
+        d = abs(rms - math.hypot(ce, ve))
+        worst = max(worst, d)
+        if d > 1e-4:
+            bad += 1
+    if n == 0:
+        return report("CE/VE/RE identity", SKIP, "nothing to compare")
+    if bad:
+        return report("CE/VE/RE identity", FAIL, "%d of %d cells fail" % (bad, n))
+    report("CE/VE/RE identity", PASS,
+           "%d cells, worst difference %.2g m" % (n, worst))
+
+
+# ---------------------------------------------------------------- 4
+def check_nearest(grasps):
+    """Every endpoint should be closer to its own target than to any other.
+
+    If a grasp is attributed to the wrong target, the endpoint error for that
+    trial is meaningless, and it would not otherwise stand out.
+    """
+    targets = {}
+    for r in grasps:
+        p = (r.get("target_position_number") or "").strip()
+        t = [num(r, "target_%s" % k) for k in "xyz"]
+        if p and None not in t:
+            targets.setdefault(p, t)
+    if len(targets) < 2:
+        return report("each endpoint nearest its target", SKIP, "fewer than 2 targets")
+    bad, n = [], 0
+    for r in grasps:
+        if (r.get("grasp_outcome") or "").strip() != "recorded":
+            continue
+        own = (r.get("target_position_number") or "").strip()
+        f = [num(r, "fingertip_%s" % k) for k in "xyz"]
+        if own not in targets or None in f:
+            continue
+        n += 1
+        dists = {p: math.dist(f, t) for p, t in targets.items()}
+        nearest = min(dists, key=dists.get)
+        if nearest != own:
+            bad.append((r.get("trial_number"), own, nearest))
+    if n == 0:
+        return report("each endpoint nearest its target", SKIP, "no usable rows")
+    if bad:
+        return report("each endpoint nearest its target", WARN,
+                      "%d of %d nearer another target (trial %s: %s, nearest %s)"
+                      % (len(bad), n, bad[0][0], bad[0][1], bad[0][2]))
+    report("each endpoint nearest its target", PASS, "%d grasps" % n)
+
+
+# ---------------------------------------------------------------- 5
+def check_structure(grasps):
+    """Trial and block counts, reported so they can be read against the plan."""
+    trials = {}
+    for r in grasps:
+        tn = (r.get("trial_number") or "").strip()
+        if tn:
+            trials.setdefault(tn, r)
+    per = Counter()
+    for r in grasps:
+        per[(r.get("trial_number") or "").strip()] += 1
+    blocks = Counter(t["block"] for t in trials.values())
+    detail = "%d trials, %d grasps; " % (len(trials), len(grasps))
+    detail += ", ".join("%s %d" % (b, n) for b, n in sorted(blocks.items()))
+    counts = set(per.values())
+    if len(counts) > 2:
+        return report("trial structure", WARN,
+                      detail + "  (grasps per trial vary: %s)" % sorted(counts))
+    report("trial structure", PASS, detail)
+
+
+# ---------------------------------------------------------------- 6
+def check_timing(grasps):
+    """Durations that cannot be true: negative times, RT exceeding the trial."""
+    problems = Counter()
+    n = 0
+    for r in grasps:
+        if (r.get("grasp_outcome") or "").strip() != "recorded":
+            continue
+        n += 1
+        rt = num(r, "cue_to_home_exit_s")
+        reach = num(r, "reach_time_s")
+        spawn = num(r, "time_since_spawn_s")
+        if reach is not None and reach <= 0:
+            problems["reach time <= 0"] += 1
+        if rt is not None and rt < 0:
+            problems["negative RT"] += 1
+        if rt is not None and spawn is not None and rt > spawn:
+            problems["RT longer than time since spawn"] += 1
+    if n == 0:
+        return report("timing sanity", SKIP, "no usable rows")
+    if problems:
+        return report("timing sanity", FAIL,
+                      "; ".join("%s x%d" % (k, v) for k, v in problems.items()))
+    report("timing sanity", PASS, "%d grasps, no impossible durations" % n)
+
+
+# ---------------------------------------------------------------- 7
+def check_cross_system(grasps):
+    """Where the two instruments both measured the endpoint, do they agree?
+
+    Two independent instruments agreeing is stronger evidence that both
+    pipelines are right than any amount of reading either one's code.
+    """
+    d = []
+    for r in grasps:
+        q = [num(r, "fingertip_%s" % k) for k in "xyz"]
+        v = [num(r, "vicon_endpoint_%s_m" % k) for k in "xyz"]
+        if None in q or None in v:
+            continue
+        d.append(math.dist(q, v) * 1000)
+    if len(d) < 10:
+        return report("Quest vs Vicon endpoint", SKIP, "no Vicon columns")
+    med = st.median(d)
+    status = PASS if med < 60 else WARN
+    report("Quest vs Vicon endpoint", status,
+           "%d reaches, median %.0f mm apart (two different points on the hand, "
+           "so a few cm is expected)" % (len(d), med))
+
+
+# ---------------------------------------------------------------- 8
+def check_shuffle(grasps):
+    """Does the manipulation check actually detect a broken manipulation?
+
+    A check that always passes is worthless. Scramble hands_visible and
+    confirm the cross-tabulation notices. This tests the TEST, not the data.
+    """
+    rows = [r for r in grasps
+            if (r.get("grasp_outcome") or "").strip() == "recorded"
+            and (r.get("block") or "").strip() in ("Visible", "Hidden")]
+    if len(rows) < 20:
+        return report("shuffle test on the manipulation check", SKIP,
+                      "not a Visit 3 session")
+
+    def disagreements(pairs):
+        want = {"Hidden": "false", "Visible": "true"}
+        return sum(1 for blk, hv in pairs if hv.lower() != want[blk])
+
+    real = [((r.get("block") or "").strip(),
+             (r.get("hands_visible") or "").strip()) for r in rows]
+    if disagreements(real) != 0:
+        return report("shuffle test on the manipulation check", WARN,
+                      "the real data already disagrees - look at the "
+                      "manipulation_check.csv before trusting this session")
+    flags = [hv for _, hv in real]
+    random.Random(1).shuffle(flags)
+    shuffled = [(blk, hv) for (blk, _), hv in zip(real, flags)]
+    found = disagreements(shuffled)
+    if found == 0:
+        return report("shuffle test on the manipulation check", FAIL,
+                      "scrambling the labels changed nothing - the check "
+                      "cannot detect a broken manipulation")
+    report("shuffle test on the manipulation check", PASS,
+           "real data 0 disagreements; scrambled %d of %d caught"
+           % (found, len(rows)))
+
+
+def main(session):
+    grasps, acc = load(session)
+    print("\nIndependent checks on %s" % os.path.basename(os.path.abspath(session)))
+    print("=" * 74)
+    print("Each one recomputes something a different way from the analysis code.\n")
+    check_endpoint(grasps)
+    check_decomposition(grasps)
+    check_identity(acc)
+    check_nearest(grasps)
+    check_structure(grasps)
+    check_timing(grasps)
+    check_cross_system(grasps)
+    check_shuffle(grasps)
+    print("=" * 74)
+    c = Counter(s for _, s, _ in results)
+    print("  %d passed, %d failed, %d warnings, %d skipped"
+          % (c[PASS], c[FAIL], c[WARN], c[SKIP]))
+    if c[FAIL]:
+        print("\n  A FAIL means the pipeline and this file disagree. One of them")
+        print("  is wrong. Do not use the session until you know which.")
+    elif c[WARN]:
+        print("\n  Warnings are worth reading but are not necessarily errors.")
+    else:
+        print("\n  Everything that can be checked independently agrees.")
+    return 1 if c[FAIL] else 0
+
+
+if __name__ == "__main__":
+    if len(sys.argv) < 2:
+        sys.exit(__doc__)
+    sys.exit(main(sys.argv[1]))
