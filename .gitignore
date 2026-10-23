@@ -124,3 +124,8 @@ __pycache__/
 
 # Pre-edit safety copies kept beside the file; git history is the real backup
 *.bak-*
+
+# Editor and sed backups. A stale copy of an analysis script in the repo is
+# worse than no copy: selftest.py.bak was committed on 22 Oct and was the
+# known-broken first version of the verification tool.
+*.bak
