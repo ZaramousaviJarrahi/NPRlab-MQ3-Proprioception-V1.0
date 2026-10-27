@@ -68,6 +68,31 @@ import os
 import sys
 from collections import defaultdict
 
+
+def _analysis_version():
+    """A short name for the code that produced this report.
+
+    The session CSV names the build that COLLECTED the data (app_commit, stamped into the
+    Unity build by Assets/Editor/StampBuildVersion.cs). This names the code that ANALYSED
+    it. Both come from the same repository, so the two can be compared directly, and a
+    report can be placed against the pipeline as it stood that day.
+
+    Returns "unknown" rather than raising: a missing version must never stop an analysis.
+    """
+    import subprocess
+    try:
+        here = os.path.dirname(os.path.abspath(__file__))
+        out = subprocess.run(["git", "describe", "--always", "--dirty", "--abbrev=7"],
+                             cwd=here, capture_output=True, text=True, timeout=5)
+        name = out.stdout.strip()
+        if out.returncode == 0 and name:
+            return name
+    except Exception:
+        pass
+    return "unknown"
+
+
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
@@ -640,6 +665,7 @@ def main():
     L.append("  CROSS-SYSTEM VALIDATION   Quest 3 hand tracking  vs  Vicon RFIN")
     L.append("=" * 78)
     L.append("  session : %s" % os.path.basename(a.grasp_csv))
+    L.append("  analysed by : %s" % _analysis_version())
     L.append("  vicon   : %s" % os.path.basename(a.vicon))
     L.append("  reaches measured by both systems: %d" % len(per_reach))
     if dropped:

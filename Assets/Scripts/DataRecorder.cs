@@ -52,6 +52,31 @@ public class DataRecorder : MonoBehaviour
     private float _lastGraspTime = -1f;
     private int _trialAttempt = 1;
 
+    // Which build is writing this file.
+    //
+    // The headset cannot ask git anything - git lives on the development machine - so the
+    // version is baked in at build time by Editor/StampBuildVersion.cs, which writes it to
+    // Resources/build_stamp.txt, and is read back from there here. Cached because
+    // Resources.Load on every row would be waste and the answer cannot change while the
+    // app is running. "unstamped" is a real answer, not an error: it means the build was
+    // made without the stamp, and the session-start warning says so.
+    private static string _buildStamp;
+
+    private static string BuildStamp
+    {
+        get
+        {
+            if (_buildStamp == null)
+            {
+                var asset = Resources.Load<TextAsset>("build_stamp");
+                _buildStamp = (asset != null && !string.IsNullOrWhiteSpace(asset.text))
+                                  ? asset.text.Trim()
+                                  : "unstamped";
+            }
+            return _buildStamp;
+        }
+    }
+
     private const string Header =
         "participant_id,visit,timestamp,block,condition,task,trial_number,grasp_in_trial,target_position_number," +
         "time_since_spawn_s,time_since_first_grasp_s,endpoint_error_m," +
@@ -84,7 +109,22 @@ public class DataRecorder : MonoBehaviour
         //                     attempted twice. Keep the rows with the HIGHEST trial_attempt
         //                     for each trial_number and drop the rest; a trial_abandoned row
         //                     marks where each abandoned attempt ended.
-        "grasp_outcome,home_hold_s,foreperiod_restarts,trial_attempt";
+        "grasp_outcome,home_hold_s,foreperiod_restarts,trial_attempt," +
+
+        // app_version         Application.version, from Project Settings > Player. The
+        //                     human-readable half of the pair: 0.2.0.
+        // app_commit          What `git describe --always --dirty --abbrev=7` returned when
+        //                     this build was made, baked in by Editor/StampBuildVersion.cs
+        //                     and read back at runtime. A tag if the build sat on one,
+        //                     otherwise the short commit hash, with -dirty appended when the
+        //                     working tree carried uncommitted changes - a bare hash would
+        //                     otherwise name code that is not what actually ran. Reads
+        //                     'unstamped' when a build skipped the stamp, which is logged as
+        //                     a warning at session start rather than left to be noticed.
+        //
+        // Together these answer "which code produced this file", which nothing else in the
+        // row does. Appended, like the columns above, so no existing reader shifts.
+        "app_version,app_commit";
 
     void Start()
     {
@@ -416,7 +456,10 @@ public class DataRecorder : MonoBehaviour
             startFactsMatch ? Secs(_sessionRunner.lastTrialHomeHoldSeconds) : "",
             startFactsMatch ? _sessionRunner.lastTrialForeperiodRestarts
                                   .ToString(CultureInfo.InvariantCulture) : "",
-            _trialAttempt.ToString(CultureInfo.InvariantCulture)
+            _trialAttempt.ToString(CultureInfo.InvariantCulture),
+
+            Clean(Application.version),
+            Clean(BuildStamp)
         });
 
         _writer.WriteLine(row);   // AutoFlush is on, so this reaches disk straight away
@@ -470,6 +513,30 @@ public class DataRecorder : MonoBehaviour
             _writer.WriteLine(Header);
 
             Debug.Log($"DataRecorder: recording to {currentFilePath}");
+
+            // Said at session start, where it can still be acted on, rather than discovered
+            // in the data months later. An unstamped or dirty build is not a reason to stop
+            // the session - the behavioural data is unaffected - but it does mean the file
+            // cannot name the code that made it.
+            if (BuildStamp == "unstamped")
+            {
+                Debug.LogWarning("DataRecorder: this build carries no git stamp, so app_commit "
+                               + "reads 'unstamped' for every row of this session and the data "
+                               + "cannot identify the code that collected it. Build from the "
+                               + "Unity editor, or run Tools > NPRlab > Stamp build version first, so "
+                               + "StampBuildVersion gets a chance to run.");
+            }
+            else if (BuildStamp.Contains("dirty"))
+            {
+                Debug.LogWarning($"DataRecorder: this build was made from a working tree with "
+                               + $"uncommitted changes (app_commit = {BuildStamp}). The commit "
+                               + "named in the data does not fully describe the code that ran. "
+                               + "Commit before building for a session that will be analysed.");
+            }
+            else
+            {
+                Debug.Log($"DataRecorder: build {Application.version} / {BuildStamp}.");
+            }
             if (string.IsNullOrWhiteSpace(participantId))
             {
                 Debug.LogWarning("DataRecorder: no participant ID was entered - this file is named NOID. " +
