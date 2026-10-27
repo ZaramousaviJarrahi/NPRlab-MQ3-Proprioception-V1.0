@@ -194,6 +194,26 @@ def quest_samples(frames):
     return t, p, conf
 
 
+# ---------------------------------------------------------------------------
+# THE PER-SESSION QUALITY GATE
+#
+# Six numbers a session has to meet before its data is trusted, fixed here in
+# advance so that an excluded session is excluded for a STATED REASON rather
+# than on inspection. They match the gate table in the study plan; if one is
+# changed, change it in both places.
+#
+# Reported as PASS / FAIL at the top of every report. A FAIL is not an
+# instruction to discard the session - it is an instruction to look, and to say
+# in the write-up what was found.
+# ---------------------------------------------------------------------------
+GATE_XCORR_Z_MIN        = 8.0     # alignment locked on, not guessed
+GATE_UNTRACKED_PCT_MAX  = 1.0     # the headset kept hold of the hand
+GATE_TIMING_BIAS_MS_ABS = 50.0    # the two clocks are not systematically apart
+GATE_DT_ABS_MS_MAX      = 40.0    # reach by reach, they agree on when
+GATE_RFIN_COVERAGE_MIN  = 95.0    # Vicon saw the marker throughout
+GATE_DROPPED_PCT_MAX    = 5.0     # few reaches lost to non-overlapping windows
+
+
 # Absolute speed threshold for the onset-latency check, in m/s. Well below
 # both systems' peak speeds so that neither is near its own maximum when it is
 # crossed, which is the condition that makes the comparison meaningful.
@@ -922,6 +942,66 @@ def main():
     L.append("  and not enough for a normative report.")
     L.append("=" * 78)
     L.append("")
+
+    # ---- the quality gate, computed last (every value is in scope here) and
+    # inserted at the TOP, which is where a reader needs it ----
+    _untracked_pct = 100.0 * qq["untracked"] / qq["frames"] if qq["frames"] else float("nan")
+    _n_all = len(per_reach) + len(dropped)
+    _dropped_pct = 100.0 * len(dropped) / _n_all if _n_all else 0.0
+    _rfin_missing = max(0, vgaps)
+    _rfin_cov = 100.0 * len(vt) / (len(vt) + _rfin_missing) if (len(vt) + _rfin_missing) else float("nan")
+    _bias_ms = float(dt.mean())
+
+    _checks = [
+        ("Cross-correlation peak (z)",       z,              "%.1f" % z,
+         ">= %.0f" % GATE_XCORR_Z_MIN,        z >= GATE_XCORR_Z_MIN),
+        ("Untracked Quest frames",           _untracked_pct, "%.2f%%" % _untracked_pct,
+         "< %.0f%%" % GATE_UNTRACKED_PCT_MAX, _untracked_pct < GATE_UNTRACKED_PCT_MAX),
+        ("Timing bias",                      _bias_ms,       "%+.0f ms" % _bias_ms,
+         "within +/-%.0f ms" % GATE_TIMING_BIAS_MS_ABS,
+         abs(_bias_ms) <= GATE_TIMING_BIAS_MS_ABS),
+        ("Median absolute timing difference", dt_abs,        "%.0f ms" % dt_abs,
+         "< %.0f ms" % GATE_DT_ABS_MS_MAX,    dt_abs < GATE_DT_ABS_MS_MAX),
+        ("Vicon RFIN trial coverage",        _rfin_cov,
+         "%.1f%%, %s" % (_rfin_cov, "no gaps" if _rfin_missing == 0 else "%d missing" % _rfin_missing),
+         ">= %.0f%%, no gaps" % GATE_RFIN_COVERAGE_MIN,
+         _rfin_cov >= GATE_RFIN_COVERAGE_MIN and _rfin_missing == 0),
+        ("Reaches dropped, windows not overlapping", _dropped_pct,
+         "%.1f%% (%d of %d)" % (_dropped_pct, len(dropped), _n_all),
+         "< %.0f%%" % GATE_DROPPED_PCT_MAX,   _dropped_pct < GATE_DROPPED_PCT_MAX),
+    ]
+
+    _failed = [c for c in _checks if not c[4]]
+
+    G = []
+    G.append("PER-SESSION QUALITY GATE")
+    G.append("   Six checks, fixed in the protocol before any data was collected, so")
+    G.append("   that an excluded session is excluded for a stated reason.")
+    G.append("")
+    G.append("   %-42s %-20s %-17s %s" % ("check", "threshold", "observed", ""))
+    G.append("   " + "-" * 74)
+    for name, _val, shown, thresh, ok in _checks:
+        G.append("   %-42s %-20s %-17s %s"
+                 % (name, thresh, shown, "PASS" if ok else "<< FAIL"))
+        add("0 gate", name, _val, "", "%s | %s" % (thresh, "PASS" if ok else "FAIL"))
+    G.append("")
+    if _failed:
+        G.append("   VERDICT: %d of 6 FAILED - %s"
+                 % (len(_failed), ", ".join(c[0] for c in _failed)))
+        G.append("   A failed check is a reason to LOOK, not an automatic exclusion. Read")
+        G.append("   the section below that the check comes from before deciding, and say")
+        G.append("   in the write-up what was found either way.")
+    else:
+        G.append("   VERDICT: all six pass.")
+    G.append("")
+    add("0 gate", "Checks failed", len(_failed), "of 6",
+        "PASS" if not _failed else ", ".join(c[0] for c in _failed))
+
+    _i = next((i for i, _s in enumerate(L) if _s.strip().startswith("A. TRACKING QUALITY")), None)
+    if _i is None:
+        L.extend(G)
+    else:
+        L[_i:_i] = G
 
     report = "\n".join(L)
     print(report)
