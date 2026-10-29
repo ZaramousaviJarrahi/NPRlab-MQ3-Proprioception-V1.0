@@ -86,6 +86,27 @@ def med(v):
     return st.median(v) if v else float("nan")
 
 
+def percentile(v, p):
+    """The p-th percentile of v, by linear interpolation between the two
+    neighbouring order statistics (the rule numpy.percentile uses by default).
+
+    Written out rather than imported so that there is no numpy dependency and
+    so the rule is visible: in a transport window of 30 samples the 95th
+    percentile falls between the 28th and 29th sorted value and both contribute
+    to the answer.
+    """
+    if not v:
+        return float("nan")
+    xs = sorted(v)
+    if len(xs) == 1:
+        return xs[0]
+    k = (len(xs) - 1) * (p / 100.0)
+    lo, hi = math.floor(k), math.ceil(k)
+    if lo == hi:
+        return xs[int(k)]
+    return xs[lo] * (hi - k) + xs[hi] * (k - lo)
+
+
 def fmt(v, dp=2, mult=1.0):
     return "" if v is None else f"{v * mult:.{dp}f}"
 
@@ -438,6 +459,7 @@ NEW_COLS = [
     "depth_offset_m", "lateral_error_m",
     "endpoint_settle_s", "endpoint_improvement_m",
     "reach_time_corrected_s", "hand_speed_at_grasp_mps", "peak_speed_mps",
+    "peak_speed_p95_mps",
     "time_after_peak_pct", "speed_peaks", "path_ratio", "normalised_jerk",
     "transport_time_s",
     "rt_speed_criterion_s", "speed_at_cue_mps", "samples_in_reach",
@@ -663,6 +685,29 @@ def analyse(grasps, frames, window, onset_frac, cutoff_hz, transport_frac,
         if seg_sp:
             peak = max(seg_sp)
             row["peak_speed_mps"] = f"{peak:.4f}"
+
+            # PEAK SPEED, TWICE, ON PURPOSE. Both definitions are written out
+            # and neither is removed.
+            #
+            # A maximum is one sample out of a noisy signal, so it is biased
+            # upward, and the bias grows as the movement gets slower - the true
+            # peak shrinks while the noise does not. Measured on two sessions
+            # of the same task at different speeds, the Quest-versus-Vicon
+            # disagreement in the MAXIMUM went +23% at 683 mm/s to +35% at
+            # 304 mm/s, while the mean over the window went +17% to +12%. The
+            # maximum moved with speed because it is partly measuring noise.
+            #
+            # The 95th percentile keeps peak velocity as the interpretable
+            # kinematic measure it is, while discarding the single most extreme
+            # sample. It is the intended reported definition (agreed with the
+            # VR collaborator, 29 Oct 2026) but is NOT yet signed off by the
+            # kinesiology supervisor, which is why the maximum stays in the
+            # file beside it.
+            #
+            # Keeping both is what makes "results are unchanged with the
+            # maximum" a sentence that can be written at all. Dropping one now
+            # would buy nothing: it costs one column and no new data.
+            row["peak_speed_p95_mps"] = f"{percentile(seg_sp, 95):.4f}"
             pk_i = ta + seg_sp.index(peak)
             total = s[tb][0] - s[ta][0]
             if total > 0:
@@ -1038,7 +1083,8 @@ def trajectory_variability_table(trajectories, n_points=101, min_n=10):
     return out
 
 
-VICON_COLS = ["vicon_peak_speed_mps", "vicon_path_ratio", "vicon_speed_peaks",
+VICON_COLS = ["vicon_peak_speed_mps", "vicon_peak_speed_p95_mps",
+              "vicon_path_ratio", "vicon_speed_peaks",
               "vicon_normalised_jerk", "vicon_transport_time_s",
               "vicon_time_after_peak_pct",
               "vicon_endpoint_x_m", "vicon_endpoint_y_m", "vicon_endpoint_z_m",
@@ -1404,6 +1450,10 @@ def add_vicon(rows, frames, vicon_path, cutoff_hz, transport_frac, endpoint_wind
         if not seg:
             continue
         row["vicon_peak_speed_mps"] = f"{max(seg):.4f}"
+        # Same two definitions on the Vicon side, on the same transport window,
+        # so the systems can be compared under either rule. See the note beside
+        # peak_speed_p95_mps in analyse().
+        row["vicon_peak_speed_p95_mps"] = f"{percentile(seg, 95):.4f}"
 
         # Joint angles on the same transport window as everything else here, so
         # they describe the same reach rather than a slightly different one.
@@ -1654,7 +1704,8 @@ def main():
     print(f"    speed at the grab    {med(col('hand_speed_at_grasp_mps')) * 1000:6.0f} mm/s")
 
     print(f"\n  MOVEMENT QUALITY")
-    print(f"    peak speed           {med(col('peak_speed_mps')) * 1000:6.0f} mm/s")
+    print(f"    peak speed           {med(col('peak_speed_mps')) * 1000:6.0f} mm/s   maximum")
+    print(f"    peak speed (95th)    {med(col('peak_speed_p95_mps')) * 1000:6.0f} mm/s   robust - the intended measure")
     print(f"    speed peaks          {med(col('speed_peaks')):6.1f}      (1 = one smooth movement)")
     print(f"    path ratio           {med(col('path_ratio')):6.3f}      (1.0 = straight)")
     print(f"    time after peak      {med(col('time_after_peak_pct')):6.1f} %")
@@ -1675,6 +1726,8 @@ def main():
             print(f"    {vicon_note}")
             print(f"    peak speed      {med(col('vicon_peak_speed_mps')) * 1000:6.0f} mm/s   "
                   f"(Quest: {med(col('peak_speed_mps')) * 1000:.0f})")
+            print(f"    peak speed 95th {med(col('vicon_peak_speed_p95_mps')) * 1000:6.0f} mm/s   "
+                  f"(Quest: {med(col('peak_speed_p95_mps')) * 1000:.0f})")
             print(f"    path ratio      {med(col('vicon_path_ratio')):6.3f}      "
                   f"(Quest: {med(col('path_ratio')):.3f})")
             print(f"    speed peaks     {med(col('vicon_speed_peaks')):6.1f}      "

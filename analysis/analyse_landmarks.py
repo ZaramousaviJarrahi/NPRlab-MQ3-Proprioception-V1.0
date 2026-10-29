@@ -83,6 +83,7 @@ is already recorded above, so it is off by default.
 import csv
 import glob
 import importlib.util
+import math
 import os
 import statistics as st
 import sys
@@ -154,6 +155,27 @@ def quest_landmark(frames, prefix):
 
 def mean_speed(seg):
     return sum(seg) / len(seg)
+
+
+def p95(seg):
+    """The 95th percentile of a reach's speeds, by linear interpolation.
+
+    The candidate definition of peak speed for the study, added 29 Oct 2026.
+    It sits between the mean and the maximum on purpose: it keeps peak velocity
+    as the interpretable kinematic measure the motor-control literature uses,
+    while discarding the single most extreme sample - which is the sample a
+    maximum is most exposed to and the one noise lands in.
+    """
+    if not seg:
+        return float("nan")
+    xs = sorted(seg)
+    if len(xs) == 1:
+        return xs[0]
+    k = (len(xs) - 1) * 0.95
+    lo, hi = math.floor(k), math.ceil(k)
+    if lo == hi:
+        return xs[int(k)]
+    return xs[lo] * (hi - k) + xs[hi] * (k - lo)
 
 
 def iqr(values):
@@ -312,24 +334,37 @@ def main(session, filter_sweep=False):
     L.append("  them is itself a result - see the note at the end - not")
     L.append("  because the maximum should be used.")
     L.append("")
+    L.append("  The 95th percentile is the candidate definition of PEAK speed")
+    L.append("  for the study (agreed with the VR collaborator 29 Oct 2026,")
+    L.append("  not yet signed off in kinesiology). All three are reported so")
+    L.append("  that the choice can be made on evidence and revisited: nothing")
+    L.append("  here needs recollecting to change it.")
+    L.append("")
     L.append("RESULT")
     L.append("")
-    L.append("  %-38s %12s %12s" % ("", "MEAN", "MAX"))
-    L.append("  %-38s %12s %12s" % ("comparison", "(use this)", "(biased)"))
+    L.append("  %-50s %9s %9s %9s" % ("", "MEAN", "95th", "MAX"))
+    L.append("  %-50s %9s %9s %9s"
+             % ("comparison", "(use this)", "(peak)", "(biased)"))
     for qk, vk, label, note in PAIRS:
         rm = ratios(reaches, qk, vk, mean_speed)
+        rp = ratios(reaches, qk, vk, p95)
         rx = ratios(reaches, qk, vk, max)
-        L.append("  %-38s %+11.0f%% %+11.0f%%"
+        L.append("  %-50s %+8.0f%% %+8.0f%% %+8.0f%%"
                  % ("%s  [%s]" % (label, note),
-                    100 * (st.median(rm) - 1), 100 * (st.median(rx) - 1)))
+                    100 * (st.median(rm) - 1), 100 * (st.median(rp) - 1),
+                    100 * (st.median(rx) - 1)))
     wm = ratios(reaches, "Q_wrist", "V_wrist_mid", mean_speed)
+    wp = ratios(reaches, "Q_wrist", "V_wrist_mid", p95)
     wx = ratios(reaches, "Q_wrist", "V_wrist_mid", max)
     lo, hi = iqr(wm)
+    lop, hip = iqr(wp)
     lox, hix = iqr(wx)
     L.append("")
     L.append("  Wrist pair, with spread:")
     L.append("     MEAN  %+.0f%%   (IQR %+.0f to %+.0f)"
              % (100 * (st.median(wm) - 1), 100 * (lo - 1), 100 * (hi - 1)))
+    L.append("      95th %+.0f%%   (IQR %+.0f to %+.0f)"
+             % (100 * (st.median(wp) - 1), 100 * (lop - 1), 100 * (hip - 1)))
     L.append("     MAX   %+.0f%%   (IQR %+.0f to %+.0f)"
              % (100 * (st.median(wx) - 1), 100 * (lox - 1), 100 * (hix - 1)))
     L.append("")
