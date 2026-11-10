@@ -179,17 +179,26 @@ def main(session):
             L.append("     bias as %% of level %+9.1f %%" % (100.0 * r["bias"] / r["mean_level"]))
         L.append("     limits of agree.  %+10.3f to %+.3f%s" % (r["lo"], r["hi"], u))
         if "slope" in r:
-            flat = abs(r["slope_t"]) < 1.96
-            L.append("     slope             %+10.4f  (95%% CI %+.4f to %+.4f, t = %+.2f)  %s"
+            # Described, not tested. The interval is printed because it shows the
+            # precision of the estimate, and the verdict says only whether it
+            # covers zero. No p-value is given and none would be valid: these
+            # reaches are not independent, so an ordinary regression understates
+            # the standard error. Calling a slope "significant" from this model
+            # would be false precision, which is why the wording is descriptive.
+            covers = abs(r["slope_t"]) < 1.96
+            L.append("     slope             %+10.4f  (95%% CI %+.4f to %+.4f, t = %+.2f, df = %d)"
                      % (r["slope"], r["slope"] - r["slope_ci"], r["slope"] + r["slope_ci"],
-                        r["slope_t"], "FLAT" if flat else "NOT FLAT - proportional bias"))
+                        r["slope_t"], r["n"] - 2))
+            L.append("                       interval %s zero"
+                     % ("covers" if covers else "does not cover"))
         L.append("")
 
     L.append("-" * 78)
-    L.append("  A slope marked NOT FLAT means the disagreement between the two")
-    L.append("  systems changes with the size of the measurement. For such a")
+    L.append("  A slope whose interval does not cover zero indicates that the")
+    L.append("  disagreement changes with the size of the measurement. For such a")
     L.append("  measure the offset does not cancel in a within-participant")
-    L.append("  contrast, so it cannot be read as a relative index.")
+    L.append("  contrast, so it cannot be read as a relative index. This is a")
+    L.append("  description of these reaches, not a significance test - see below.")
     L.append("")
     L.append("  THE CONFIDENCE INTERVALS ABOVE ASSUME INDEPENDENT REACHES, AND THESE")
     L.append("  ARE NOT INDEPENDENT. They are repeated reaches by one person, so the")
