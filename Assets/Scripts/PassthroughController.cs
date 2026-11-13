@@ -50,6 +50,16 @@ public class PassthroughController : MonoBehaviour
     [Tooltip("Use the scene's skybox instead of a flat colour when passthrough is off.")]
     public bool useSkyboxInVR = false;
 
+    [Header("The Visit 3 environment")]
+    [Tooltip("The object holding everything that should exist ONLY when passthrough is off: " +
+             "the scanned room and the table. Leave empty if this scene has no VR environment.\n\n" +
+             "WHY THIS IS WIRED TO PASSTHROUGH AND NOT TO THE VISIT NUMBER. A scanned room is " +
+             "opaque, so if it were left on during Visits 1 and 2 it would be drawn straight over " +
+             "the camera feed and the participant would run an acquisition session in VR without " +
+             "anyone deciding to. Tying it to this component means one line owns both facts: the " +
+             "camera feed and the environment can never disagree about which visit is running.")]
+    public GameObject vrEnvironment;
+
     [Header("Status (read-only while running)")]
     public bool passthroughOn = true;
 
@@ -69,6 +79,11 @@ public class PassthroughController : MonoBehaviour
                              "not supported. Visits 1 and 2 will not show the room.");
 
         passthroughOn = OVRManager.instance != null && OVRManager.instance.isInsightPassthroughEnabled;
+
+        // Match the environment to whatever passthrough is doing before a session starts.
+        // Without this the room would be visible on the menu screen of every visit, and a
+        // Visit 1 participant would put the headset on inside a scanned room.
+        if (vrEnvironment != null) vrEnvironment.SetActive(!passthroughOn);
     }
 
     /// <summary>
@@ -111,6 +126,11 @@ public class PassthroughController : MonoBehaviour
                 cam.backgroundColor = c;
             }
         }
+
+        // The environment exists only in VR. Same call, same moment, so it cannot drift out of
+        // step with the camera feed.
+        if (vrEnvironment != null && vrEnvironment.activeSelf == on)
+            vrEnvironment.SetActive(!on);
 
         passthroughOn = on;
         Debug.Log($"PassthroughController: passthrough {(on ? "ON (AR)" : "OFF (VR)")}" +
