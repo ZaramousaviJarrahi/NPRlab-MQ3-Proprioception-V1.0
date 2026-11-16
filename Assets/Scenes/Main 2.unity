@@ -1818,7 +1818,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   participantNumber: 1
   participantPrefix: P
-  visitNumber: 3
+  visitNumber: 1
   useControllerButtons: 1
   useKeyboard: 1
   showShortcutList: 1
