@@ -230,6 +230,29 @@ public class SessionConfig : MonoBehaviour
                     { sequencer.gridDistance = gd; applied.Add($"gridDistance={gd}"); }
                     break;
 
+                // Scheduled rests (RestBreak). restSeconds = 0 turns them off.
+                case "restseconds":
+                    if (float.TryParse(val, NumberStyles.Float, CultureInfo.InvariantCulture, out float rs))
+                    {
+                        var rb = GetComponent<RestBreak>();
+                        if (rb == null) rb = gameObject.AddComponent<RestBreak>();
+                        rb.restSeconds = Mathf.Max(0f, rs);
+                        applied.Add($"restSeconds={rb.restSeconds}");
+                    }
+                    break;
+                case "visit1restafter":
+                case "visit2restafter":
+                case "visit3restafter":
+                    {
+                        var rb = GetComponent<RestBreak>();
+                        if (rb == null) rb = gameObject.AddComponent<RestBreak>();
+                        if (key == "visit1restafter") rb.visit1RestAfter = val;
+                        else if (key == "visit2restafter") rb.visit2RestAfter = val;
+                        else rb.visit3RestAfter = val;
+                        applied.Add($"{key}={val}");
+                    }
+                    break;
+
                 default:
                     Debug.LogWarning($"SessionConfig: ignoring unknown setting '{key}'.");
                     break;

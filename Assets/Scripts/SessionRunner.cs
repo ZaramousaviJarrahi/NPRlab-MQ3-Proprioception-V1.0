@@ -144,6 +144,11 @@ public class SessionRunner : MonoBehaviour
         _experimenterMode = GetComponent<ExperimenterMode>();
         _cues             = GetComponent<SessionCues>();
 
+        // Scheduled rests. Added if missing, so a scene that predates it still gets rests;
+        // restSeconds = 0 (Inspector or session_config.txt) turns them off.
+        _rest = GetComponent<RestBreak>();
+        if (_rest == null) _rest = gameObject.AddComponent<RestBreak>();
+
         if (_trialCounter != null)
         {
             _trialCounter.OnTrialComplete -= HandleTrialComplete;
@@ -969,6 +974,7 @@ public class SessionRunner : MonoBehaviour
     private HomeGate _homeGate;
     private FingertipFrameLogger _frameLog;
     private HomeAudioGuide _homeAudio;
+    private RestBreak _rest;
     private Coroutine _startRoutine;
     private Coroutine _rtRoutine;
     private bool _trialRunning;
@@ -982,6 +988,15 @@ public class SessionRunner : MonoBehaviour
         if (trialIndex >= _order.Count)
         {
             Debug.Log("Session already complete - no trials left.");
+            return;
+        }
+
+        // A scheduled rest is running. Refused rather than allowed, because the rests only
+        // stay harmless to the design if every participant gets exactly the same ones.
+        if (_rest != null && _rest.IsResting)
+        {
+            Debug.LogWarning($"SessionRunner: rest in progress - {_rest.SecondsLeft:F0} s left. " +
+                             "Start the next trial when the countdown ends.");
             return;
         }
 
@@ -1380,6 +1395,16 @@ public class SessionRunner : MonoBehaviour
 
         trialIndex++;
         PrepareCurrentTrial();
+
+        // trialIndex now equals the number of trials completed, so a rest "after trial 24"
+        // starts here when trialIndex is 24. Only on completion: an abandoned trial does not
+        // advance, so a re-run never triggers a second rest.
+        if (_rest != null && currentBlock != "COMPLETE")
+        {
+            var restControls = GetComponent<ExperimenterControls>();
+            int restVisit = restControls != null ? restControls.visitNumber : 1;
+            if (_rest.IsRestPointAfter(trialIndex, restVisit)) _rest.Begin(trialIndex, restVisit);
+        }
     }
 
     public string CurrentBlockLabel() => sessionPlanned ? currentBlock : "";

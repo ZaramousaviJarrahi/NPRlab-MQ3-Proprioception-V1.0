@@ -1767,7 +1767,7 @@ MonoBehaviour:
   useFixedGrid: 1
   gridWidth: 0.5
   gridHeight: 0.4
-  gridDistance: 0.45
+  gridDistance: 0.5
   gridHeightOffset: -0.15
   showHomeMarker: 1
   homeBelowBottomRow: -0.2
@@ -3313,7 +3313,7 @@ Transform:
   m_GameObject: {fileID: 955917094}
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
-  m_LocalPosition: {x: 0, y: 0.702, z: 0.47}
+  m_LocalPosition: {x: 0, y: 0.702, z: 0.45}
   m_LocalScale: {x: 0.76, y: 0.026, z: 0.606}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -4588,7 +4588,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: 7c6080234a8294ca98ba1d963416b749, type: 3}
       propertyPath: m_LocalPosition.z
-      value: -0.08
+      value: -0.1
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: 7c6080234a8294ca98ba1d963416b749, type: 3}
       propertyPath: m_LocalRotation.w
