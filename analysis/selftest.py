@@ -134,6 +134,40 @@ def check_decomposition(grasps):
            "%d grasps, worst difference %.2g m" % (n, worst))
 
 
+# ---------------------------------------------------------------- 2b
+def check_signed_split(grasps):
+    """vert^2 + horiz^2 should equal lateral_error_m.
+
+    The signed pair is what CE and VE are built from. Before 22 Nov 2026 CE and
+    VE were built from lateral_error_m, which is a magnitude: random scatter
+    then read as systematic bias, because |perp| is never negative. The
+    RMS^2 = CE^2 + VE^2 identity in check_identity holds for ANY pair of
+    numbers, so it could not see that. This check can.
+    """
+    bad, n, worst = 0, 0, 0.0
+    for r in grasps:
+        if (r.get("grasp_outcome") or "").strip() != "recorded":
+            continue
+        lat, ver, hor = (num(r, "lateral_error_m"), num(r, "lateral_vert_m"),
+                         num(r, "lateral_horiz_m"))
+        if None in (lat, ver, hor):
+            continue
+        n += 1
+        d = abs(math.hypot(ver, hor) - lat)
+        worst = max(worst, d)
+        if d > 1e-4:
+            bad += 1
+    if n == 0:
+        return report("signed lateral split", SKIP,
+                      "lateral_vert_m / lateral_horiz_m absent - rebuild out/ from raw/")
+    if bad:
+        return report("signed lateral split", FAIL,
+                      "%d of %d rows do not satisfy vert^2+horiz^2 = lateral^2"
+                      % (bad, n))
+    report("signed lateral split", PASS,
+           "%d grasps, worst difference %.2g m" % (n, worst))
+
+
 # ---------------------------------------------------------------- 3
 def check_identity(acc):
     """RMS^2 = CE^2 + VE^2. A mathematical fact, not a modelling choice."""
@@ -324,6 +358,7 @@ def main(session):
     print("Each one recomputes something a different way from the analysis code.\n")
     check_endpoint(grasps)
     check_decomposition(grasps)
+    check_signed_split(grasps)
     check_identity(acc)
     check_nearest(grasps)
     check_structure(grasps)

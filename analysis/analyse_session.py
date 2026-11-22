@@ -454,9 +454,16 @@ def normalised_jerk(s, lo, hi):
 
 # ----------------------------------------------------------------------- the work
 
+# Which axis is up in the headset frame. y, on the Quest. Worth re-checking if
+# the logger ever changes: analyse_spatialcheck.py infers the grid plane from
+# the data instead of assuming, and its in-plane axes come out as x and y with
+# z as depth, which agrees with this.
+WORLD_UP = (0.0, 1.0, 0.0)
+
 NEW_COLS = [
     "endpoint_error_corrected_m", "endpoint_outcome",
     "depth_offset_m", "lateral_error_m",
+    "lateral_vert_m", "lateral_horiz_m",
     "endpoint_settle_s", "endpoint_improvement_m",
     "reach_time_corrected_s", "hand_speed_at_grasp_mps", "peak_speed_mps",
     "peak_speed_p95_mps",
@@ -572,6 +579,37 @@ def analyse(grasps, frames, window, onset_frac, cutoff_hz, transport_frac,
                 row["depth_offset_m"] = f"{depth:.5f}"
                 row["lateral_error_m"] = f"{math.sqrt(sum(c * c for c in perp)):.5f}"
 
+                # --- signed split of the perpendicular component --------------
+                # lateral_error_m above is a MAGNITUDE, so it carries no
+                # direction. CE and VE need direction: |perp| is never negative,
+                # so averaging it turns random scatter into what looks like a
+                # systematic bias. On 30 trials with no perpendicular bias and
+                # 6 mm of scatter, that inflated CE by about a third and
+                # understated VE by about a third, and the lat^2+dep^2 identity
+                # check passes either way, so selftest could not see it.
+                #
+                # perp is therefore also reported as two SIGNED axes taken
+                # inside the perpendicular plane. Both are at right angles to
+                # the direction of travel by construction, so neither inherits
+                # the grasp-registration artefact that contaminates depth.
+                # Room-vertical would inherit it: these reaches travel up and
+                # down, so world "up" partly aligns with the reach.
+                #
+                # lateral_error_m == hypot(lateral_vert_m, lateral_horiz_m), so
+                # nothing downstream of it changes.
+                d_up = sum(u * a for u, a in zip(WORLD_UP, ax))
+                e_v = tuple(u - d_up * a for u, a in zip(WORLD_UP, ax))
+                n_v = math.sqrt(sum(c * c for c in e_v))
+                if n_v > 1e-6:          # guard: a reach straight up has no "up"
+                    e_v = tuple(c / n_v for c in e_v)
+                    e_h = (ax[1] * e_v[2] - ax[2] * e_v[1],
+                           ax[2] * e_v[0] - ax[0] * e_v[2],
+                           ax[0] * e_v[1] - ax[1] * e_v[0])
+                    row["lateral_vert_m"] = (
+                        f"{sum(c * v for c, v in zip(perp, e_v)):.5f}")
+                    row["lateral_horiz_m"] = (
+                        f"{sum(c * h for c, h in zip(perp, e_h)):.5f}")
+
             # --- validity threshold on the endpoint -----------------------------
             #
             # A grasp can register with the fingertip nowhere near the target. Two
@@ -614,6 +652,8 @@ def analyse(grasps, frames, window, onset_frac, cutoff_hz, transport_frac,
                 row["endpoint_outcome"] = "out_of_range"
                 row["depth_offset_m"] = ""
                 row["lateral_error_m"] = ""
+                row["lateral_vert_m"] = ""
+                row["lateral_horiz_m"] = ""
             else:
                 row["endpoint_outcome"] = "ok"
 
@@ -843,16 +883,30 @@ def accuracy_table(rows, min_n=10):
     the one least affected by it, because a constant offset does not change the
     spread about the mean. The depth column is here so the size of that artefact
     is visible rather than buried.
+
+    Computed from the three SIGNED components - depth, lateral_vert,
+    lateral_horiz - and not from lateral_error_m. lateral_error_m is a
+    magnitude, and the magnitude of an average is not the average of
+    magnitudes. Using it meant a participant who missed 1 cm left and then 1 cm
+    right, with no bias at all, averaged to a 1 cm CE. Random scatter was being
+    read as systematic bias. It cut the other way for VE: the spread of a
+    positive-only number is smaller than the spread in the plane, so VE came out
+    too small. The RMS^2 = CE^2 + VE^2 identity holds for any pair of numbers,
+    so it never caught this.
+
+    Requires lateral_vert_m and lateral_horiz_m, so out/ must be rebuilt from
+    raw/ for sessions processed before 22 Nov 2026.
     """
     cells = defaultdict(list)
     for r in rows:
         if (r.get("grasp_outcome") or "").strip() != "recorded":
             continue
         pos = (r.get("target_position_number") or "").strip()
-        lat, dep = num(r, "lateral_error_m"), num(r, "depth_offset_m")
-        if not pos or lat is None or dep is None:
+        dep = num(r, "depth_offset_m")
+        ver, hor = num(r, "lateral_vert_m"), num(r, "lateral_horiz_m")
+        if not pos or dep is None or ver is None or hor is None:
             continue
-        cells[(r.get("block", ""), pos)].append((dep, lat))
+        cells[(r.get("block", ""), pos)].append((dep, ver, hor))
 
     # The plan reports VE only at 10 or more observations in a cell: below that
     # the spread about the participant's own mean is unstable and can read as
@@ -866,17 +920,21 @@ def accuracy_table(rows, min_n=10):
     for (block, pos), v in sorted(cells.items(), key=lambda kv: (kv[0][0], int(kv[0][1]))):
         if len(v) < 2:
             continue
-        mdep = st.mean([a for a, _ in v])
-        mlat = st.mean([b for _, b in v])
-        ce = math.hypot(mdep, mlat)
-        ve = math.sqrt(st.mean([(a - mdep) ** 2 + (b - mlat) ** 2 for a, b in v]))
-        re = st.mean([math.hypot(a, b) for a, b in v])
-        rms = math.sqrt(st.mean([a * a + b * b for a, b in v]))
+        mdep = st.mean([a for a, _, _ in v])
+        mver = st.mean([b for _, b, _ in v])
+        mhor = st.mean([c for _, _, c in v])
+        ce = math.sqrt(mdep ** 2 + mver ** 2 + mhor ** 2)
+        ve = math.sqrt(st.mean([(a - mdep) ** 2 + (b - mver) ** 2 + (c - mhor) ** 2
+                                for a, b, c in v]))
+        re = st.mean([math.sqrt(a * a + b * b + c * c) for a, b, c in v])
+        rms = math.sqrt(st.mean([a * a + b * b + c * c for a, b, c in v]))
+        mlat = st.mean([math.hypot(b, c) for _, b, c in v])
         out.append({
             "block": block, "target_position_number": pos, "n": str(len(v)),
             "enough_for_VE": "yes" if len(v) >= min_n else f"NO - needs {min_n}",
             "CE_m": f"{ce:.5f}", "VE_m": f"{ve:.5f}", "RE_m": f"{re:.5f}",
             "mean_depth_offset_m": f"{mdep:.5f}", "mean_lateral_error_m": f"{mlat:.5f}",
+            "mean_lateral_vert_m": f"{mver:.5f}", "mean_lateral_horiz_m": f"{mhor:.5f}",
             "check_rms_vs_CE_VE": f"{rms:.5f} vs {math.hypot(ce, ve):.5f}",
         })
     return out
@@ -1699,6 +1757,8 @@ def main():
                   f"  {(num(r, 'endpoint_error_corrected_m') or 0) * 100:.1f} cm")
         print(f"    --")
     print(f"    lateral error        {med(col('lateral_error_m')) * 100:6.2f} cm   THE AIM")
+    print(f"      vertical           {med(col('lateral_vert_m')) * 100:+6.2f} cm   signed: + high, - low")
+    print(f"      horizontal         {med(col('lateral_horiz_m')) * 100:+6.2f} cm   signed, across the reach")
     print(f"    depth offset         {med(col('depth_offset_m')) * 100:+6.2f} cm   interaction artefact")
     print(f"    radial (uncorrected) {med(col('endpoint_error_m')) * 100:6.2f} cm   contains both")
     print(f"    speed at the grab    {med(col('hand_speed_at_grasp_mps')) * 1000:6.0f} mm/s")
